@@ -4,7 +4,21 @@
 
 set -e
 
-vmexperiment -c known.conf >/tmp/vmexperiment-known.out
+rm -f /tmp/vmexperiment-known.csv
+vmexperiment -c known.conf >/tmp/vmexperiment-known.out 2>/tmp/vmexperiment-known.err &
+vm_pid=$!
+attempt=0
+while [ "$attempt" -lt 30 ]
+do
+	if [ -f /tmp/vmexperiment-known.csv ] &&
+	    [ "`wc -l < /tmp/vmexperiment-known.csv`" -ge 3 ]; then
+		break
+	fi
+	sleep 1
+	attempt=`expr "$attempt" + 1`
+done
+kill -9 "$vm_pid" 2>/dev/null || true
+wait "$vm_pid" 2>/dev/null || true
 
 fifo_faults=`awk -F, '$1 == "FIFO" { print $9 }' /tmp/vmexperiment-known.csv`
 lru_faults=`awk -F, '$1 == "LRU" { print $9 }' /tmp/vmexperiment-known.csv`

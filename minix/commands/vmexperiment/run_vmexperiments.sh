@@ -19,6 +19,7 @@ run_case()
 	level_bits=$3
 	frames=$4
 
+	rm -f "$SINGLE"
 	{
 		echo "address_bits=32"
 		echo "page_size=$page_size"
@@ -35,7 +36,26 @@ run_case()
 		echo "csv_output=$SINGLE"
 	} > "$CONFIG"
 
-	vmexperiment -c "$CONFIG" >/dev/null
+	vmexperiment -c "$CONFIG" >/dev/null 2>/tmp/vmexperiment-matrix.log &
+	vm_pid=$!
+	attempt=0
+	while [ "$attempt" -lt 120 ]
+	do
+		if [ -f "$SINGLE" ] && [ "`wc -l < "$SINGLE"`" -ge 3 ]; then
+			break
+		fi
+		sleep 1
+		attempt=`expr "$attempt" + 1`
+	done
+	if [ ! -f "$SINGLE" ] || [ "`wc -l < "$SINGLE"`" -lt 3 ]; then
+		kill -9 "$vm_pid" 2>/dev/null || true
+		echo "vmexperiment case timed out" >&2
+		exit 1
+	fi
+	# This MINIX 3.3 image can spin in libc process teardown after the CSV is
+	# durably closed. Stop only the completed worker, then consume its results.
+	kill -9 "$vm_pid" 2>/dev/null || true
+	wait "$vm_pid" 2>/dev/null || true
 	if [ ! -f "$OUTPUT" ]; then
 		cat "$SINGLE" > "$OUTPUT"
 	else

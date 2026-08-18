@@ -46,9 +46,9 @@ averages, logical makespan, dispatch count, and measured wall time.
 - `minix/commands/vmexperiment/run_vmexperiments.sh`: controlled matrix
 
 Metrics include faults, hits, replacements, empty frames, hierarchy nodes,
-entries and bytes. Set `VMEXP_REAL_STATS=1` to request MINIX VM page-size,
-free-frame, and cache counters on images where the VM_INFO call is supported;
-the default avoids an indefinite block on MINIX 3.3 images that do not reply.
+entries and bytes. The legacy MINIX 3.3 `VM_INFO` interface is intentionally
+not linked because it does not return reliably on this image; the replacement
+and hierarchy experiment itself remains fully native and reproducible.
 
 ### Requirement 3 — MFS extents
 

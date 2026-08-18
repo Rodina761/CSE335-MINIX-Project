@@ -2,12 +2,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
-
-#ifdef __minix
-#include <minix/type.h>
-#include <minix/vm.h>
-#endif
 
 #include "vmexperiment.h"
 
@@ -30,25 +24,6 @@ static void usage(const char *program)
 static void collect_real_stats(struct real_vm_stats *stats)
 {
 	memset(stats, 0, sizeof(*stats));
-#ifdef __minix
-	{
-		struct vm_stats_info info;
-
-		/* Some MINIX 3.3 VM images do not reply to VM_INFO for an
-		 * unprivileged command. Keep native counters opt-in so the
-		 * deterministic experiment cannot block indefinitely. */
-		if (getenv("VMEXP_REAL_STATS") == NULL)
-			return;
-		if (vm_info_stats(&info) == 0) {
-			stats->available = 1;
-			stats->page_size = info.vsi_pagesize;
-			stats->total = info.vsi_total;
-			stats->free = info.vsi_free;
-			stats->largest = info.vsi_largest;
-			stats->cached = info.vsi_cached;
-		}
-	}
-#endif
 }
 
 static void print_configuration(const struct vmexp_config *cfg,
@@ -246,7 +221,5 @@ int main(int argc, char **argv)
 	printf("CSV results written to %s\n", cfg.csv_output);
 	free(addresses);
 	fprintf(stderr, "vmexperiment: complete\n");
-	/* MINIX 3.3's legacy stdio cleanup may block after VM-related work.
-	 * All durable output (the CSV) has already been closed by write_csv(). */
-	_exit(0);
+	return 0;
 }
