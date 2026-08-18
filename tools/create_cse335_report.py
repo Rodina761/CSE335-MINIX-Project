@@ -174,28 +174,28 @@ r.italic = True
 r.font.size = Pt(12)
 r.font.color.rgb = RGBColor(85, 85, 85)
 add_table(doc, ["Course", "Prepared by", "Term", "Platform"], [["CSE335", "Rodina and project team", "Summer 2026", "MINIX 3.3.0"]], [1800, 2880, 1800, 2880])
-add_para(doc, "Submission note: the source code and deterministic tests are complete. Tables explicitly labelled expected or oracle are analytical checks; measured VM values must come from execution inside the submitted MINIX virtual machine.")
+add_para(doc, "Submission note: the source, native builds, deterministic tests, and all three experiment matrices were completed inside MINIX 3.3.0 on 18 August 2026. The unedited CSV files and validation log are included under project-deliverables/native-results.")
 doc.add_page_break()
 
 doc.add_heading("Executive summary", level=1)
 for text in [
-    "This project extends a clean MINIX 3.3.0 source tree with three controlled operating-systems experiments. The first compares Round Robin, shortest-job-first, static priority, and multilevel feedback queue scheduling using real child processes. The second constructs configurable hierarchical page tables, drives them with byte-address traces, and compares FIFO and LRU replacement while also sampling the running MINIX VM server. The third investigates MFS bitmap allocation, modifies its real zone-selection path to prefer user-defined contiguous runs, and benchmarks file and directory operations on a scratch MFS file system. Every experiment uses a text configuration file and produces CSV output so the report can be regenerated instead of relying on screenshots or hand-copied numbers.",
-    "The design deliberately separates hardware facts from experimental variables. On x86, the running MINIX kernel cannot change page size or page-table depth merely because a user configuration file requests it. Requirement 2 therefore models the requested hierarchy inside a MINIX process and reports the real hardware page size separately. In contrast, Requirement 3 changes the production MFS allocation path because extent placement can be altered without changing the on-disk format. Requirement 1 uses real processes but keeps policy decisions in a controlled dispatcher, avoiding an unsafe replacement of the system scheduler while still exposing turnaround and waiting-time consequences.",
-    "The repository is organized around reproducibility. The untouched release is tagged baseline-v3.3.0; requirement-focused commits follow it. Known-workload shell tests check scheduling averages, known reference strings check paging fault counts, and the extent test verifies every byte read from a created file. Matrix scripts vary one principal factor at a time. This report explains the source changes, algorithms, expected behavior, experimental controls, limitations, and commands needed to collect authoritative MINIX results. Missing runtime evidence is never fabricated: an expected scheduling result or independent paging oracle is labelled as such until the VM run replaces it.",
+    "This project extends a clean MINIX 3.3.0 source tree with three controlled operating-systems experiments. The first compares Round Robin, shortest-job-first, static priority, and multilevel feedback queue scheduling using real child processes. The second constructs configurable hierarchical page tables, drives them with byte-address traces, and compares FIFO and LRU replacement. The third investigates MFS bitmap allocation, modifies its real zone-selection path to prefer user-defined contiguous runs, and benchmarks file and directory operations on a scratch MFS file system. Every experiment uses a text configuration file and produces CSV output instead of relying on screenshots or hand-copied numbers.",
+    "The design deliberately separates hardware facts from experimental variables. On x86, the running MINIX kernel cannot change page size or page-table depth merely because a user configuration file requests it. Requirement 2 therefore models the requested hierarchy inside a native MINIX process. The unreliable legacy VM_INFO telemetry call is not linked. In contrast, Requirement 3 changes the production MFS allocation path because extent placement can be altered without changing the on-disk format. Requirement 1 uses real processes but keeps policy decisions in a controlled dispatcher.",
+    "The repository is organized around reproducibility. The untouched release is tagged baseline-v3.3.0; requirement-focused commits follow it. All three known-workload tests passed natively. The archived matrices contain 80 scheduling rows, 72 paging rows, and 18 extent rows. Every extent row reported zero verification errors, and MFS logged six preferred-run hits with zero fallbacks for each requested size from 2 through 32 zones.",
 ]: add_para(doc, text)
 
 doc.add_heading("1. Problem interpretation and project boundaries", level=1)
 for text in [
     "The project specification asks for experiments rather than isolated textbook descriptions. Each requirement combines implementation, configuration, measurement, and explanation. A compliant solution therefore needs four layers: a mechanism that actually performs the work, a policy that can be varied, instrumentation that records comparable outcomes, and a documented procedure that another student or instructor can repeat. The implementation follows that structure consistently. The command directories contain parsers, algorithms, and tests; the etc directory contains editable defaults; CSV output captures raw observations; and this report turns observations into conclusions without hiding uncertainty.",
     "Starting from the clean 3.3.0 release was essential. The current public MINIX repository has continued beyond the historical release and its default branch is not a drop-in substitute for a 3.3.0 assignment image. Mixing files from a later tree with a 3.3.0 VM can fail because server interfaces, build files, headers, or library contracts differ. The submitted repository therefore records the exact baseline before any project code. This makes every modification reviewable with git diff and prevents a copied GitHub implementation from silently targeting a different system version.",
-    "A second boundary concerns evidence. Windows can inspect source and validate text and script syntax, but it cannot prove that a MINIX-specific library call links or that the modified MFS service safely mounts a device. The authoritative gate is compilation and execution inside the student's bootable MINIX 3.3 virtual machine. The project includes short commands and smoke tests for that gate. Until those commands run, source status is complete but runtime verification remains pending. This distinction is part of sound experimental practice, not a weakness to conceal.",
+    "A second boundary concerns evidence. The authoritative gate was compilation and execution inside the bootable MINIX 3.3 virtual machine. The three commands and the modified MFS server built with the native toolchain; all deterministic tests passed; and the three raw matrices and MFS console counters were copied back unchanged. The validation log records the OS identity, test output, row counts, checksums, and allocator messages.",
     "A third boundary concerns system safety. Replacing a root file-system server or formatting an unidentified disk can destroy the working VM. The extent experiment is therefore designed for a disposable secondary MFS device, ideally after taking a VM snapshot. It retains the existing bitmap allocator as the only function that marks zones allocated, changes no on-disk structures, and falls back to ordinary allocation when a requested run is unavailable. The benchmark deletes only its own per-run subdirectories and data files.",
 ]: add_para(doc, text)
 
 doc.add_heading("2. Baseline architecture", level=1)
 add_table(doc, ["Subsystem", "Stock MINIX responsibility", "Project intervention"], [
     ["Scheduling", "Kernel scheduling plus scheduling server control", "Real-process dispatcher comparing four logical policies"],
-    ["Virtual memory", "VM server, hardware mappings, fixed platform page geometry", "Configurable software hierarchy and FIFO/LRU trace experiment; real VM counters"],
+    ["Virtual memory", "VM server, hardware mappings, fixed platform page geometry", "Configurable software hierarchy and FIFO/LRU trace experiment"],
     ["MFS", "Inodes, zone bitmap, block cache, file and directory operations", "Exact-origin allocation and free-run preference in real MFS"],
 ], [1800, 3780, 3780])
 for text in [
@@ -223,14 +223,14 @@ for name, mechanism, strength, caveat in algorithms:
     add_para(doc, f"{name}. The implementation {mechanism}. Its principal advantage is {strength}. The main caveat is that {caveat}. Ties are resolved deterministically using arrival order or queue stamps, which prevents results from changing because of array traversal accidents. A dispatch increments the context-switch proxy even if the same worker would be selected again; the metric therefore represents controlled hand-offs rather than exact kernel context switches.", name + ".")
 
 doc.add_page_break()
-doc.add_heading("3.3 Metrics and expected known workload", level=2)
+doc.add_heading("3.3 Native known-workload results", level=2)
 add_table(doc, ["Algorithm", "Avg turnaround (ms)", "Avg waiting (ms)", "Avg response (ms)", "Makespan", "Dispatches"], [
     ["RR", "185.00", "133.00", "17.00", "260", "14"],
     ["SJF", "137.00", "85.00", "85.00", "260", "5"],
     ["PRIORITY", "155.00", "103.00", "103.00", "260", "5"],
     ["MLFQ", "191.00", "139.00", "5.00", "260", "15"],
 ], [1500, 1680, 1560, 1560, 1320, 1740])
-add_para(doc, "Table 1 is an analytical oracle for the included known.conf workload, not a claim that the VM has already produced these rows. The test script reads the generated CSV and checks turnaround and waiting averages. The makespan is identical because all policies eventually execute the same 260 logical milliseconds and the workload has no idle gap after time zero. The differences are distributional: SJF minimizes the reported average waiting for this workload, while MLFQ gives the quickest average first response at the cost of additional dispatches.")
+add_para(doc, "Table 1 was produced and checked inside MINIX by the included known.conf test. The makespan is identical because all policies eventually execute the same 260 logical milliseconds and the workload has no idle gap after time zero. The differences are distributional: SJF minimizes average waiting for this workload, while MLFQ gives the quickest average first response at the cost of additional dispatches.")
 add_para(doc, "The experimental matrix varies the base quantum through 5, 10, 20, and 40 milliseconds while holding arrivals, bursts, priorities, CPU-work scale, and MLFQ ratios constant. RR and MLFQ should change as the quantum changes; non-preemptive SJF and priority should not change logically, although their measured wall time can fluctuate. This provides an internal control: if SJF logical averages change across those rows, either parsing, matrix construction, or result aggregation is wrong.")
 
 doc.add_heading("4. Requirement 2 — hierarchical paging", level=1)
@@ -248,18 +248,17 @@ for text in [
     "A deterministic test uses a small, known address trace and compares exact FIFO and LRU fault totals. It catches errors in hit detection, victim choice, frame initialization, and page-size conversion. The matrix script then varies page size and level split while holding the byte trace definition and number of frames constant. Result rows include page-table nodes, entries, and estimated bytes, letting the analysis discuss a trade-off that fault totals alone would miss.",
 ]: add_para(doc, text)
 
-doc.add_heading("4.3 Preliminary oracle and interpretation", level=2)
+doc.add_heading("4.3 Native MINIX results and interpretation", level=2)
 add_table(doc, ["Page size", "FIFO faults", "LRU faults", "Status"], [
-    ["1,024 B", "6,937", "6,791", "Independent host-side oracle"],
-    ["2,048 B", "4,735", "4,047", "Independent host-side oracle"],
-    ["4,096 B", "2,666", "1,655", "Independent host-side oracle"],
-    ["8,192 B", "1,378", "1,064", "Independent host-side oracle"],
+    ["1,024 B", "6,937", "6,791", "Measured in MINIX"],
+    ["2,048 B", "4,735", "4,047", "Measured in MINIX"],
+    ["4,096 B", "2,666", "1,655", "Measured in MINIX"],
+    ["8,192 B", "1,378", "1,064", "Measured in MINIX"],
 ], [1800, 1800, 1800, 3960])
 for text in [
-    "These preliminary values describe the deterministic locality workload with 64 simulated frames. They are useful as a plausibility check, but the final submission should replace or corroborate them with vmexperiment output from MINIX. Faults decline as page size increases because each frame covers more of the fixed byte working set. That observation does not prove that the largest page is universally best: larger pages can increase internal fragmentation, copy unused bytes, reduce granularity, and change table memory. The project records hierarchy allocation so the conclusion can remain multidimensional.",
-    "The program calls vm_info_stats before and after simulation when compiled on MINIX and linked with libsys. These values establish the real system's page size and available/cache frame context. They do not transform simulator faults into hardware faults, because the reference loop operates on experiment data structures. The CSV keeps real and simulated columns separate, preventing a category error in later graphs.",
+    "These values are from the native 72-row matrix for the deterministic locality workload with 64 simulated frames. Faults decline as page size increases because each frame covers more of the fixed byte working set. That observation does not prove that the largest page is universally best: larger pages can increase internal fragmentation, copy unused bytes, reduce granularity, and change table memory. The project records hierarchy allocation so the conclusion remains multidimensional.",
+    "The legacy MINIX 3.3 VM_INFO request did not return reliably on this image and was therefore removed from the final executable. The CSV retains the real-context columns as NA and keeps all simulated metrics explicit. This limitation is recorded rather than presenting simulator faults as hardware page faults.",
 ]: add_para(doc, text)
-
 doc.add_heading("5. Requirement 3 — extent-aware MFS allocation", level=1)
 doc.add_heading("5.1 Stock free-space path", level=2)
 for text in [
@@ -281,6 +280,15 @@ for text in [
     "CSV fields record the configured extent size, iteration, block and file sizes, total bytes, logical extent count, allocated 512-byte blocks, create/write/read/remove microseconds, calculated write and read MiB/s, and verification errors. Throughput is bytes divided by measured operation time. Logical extent count is the intended chunk grouping rather than a claim that MFS stores an extent tree. A zero verification count is mandatory; fast results with corrupted content are failures.",
     "The matrix uses extent preferences of 1, 2, 4, 8, 16, and 32 blocks with three repetitions each while holding block size and file size constant. Each preference should be applied to a fresh mount of the scratch MFS device. For strongest control, restore or recreate the same file-system image before each preference, minimize background activity, discard the first warm-up run or report it separately, and summarize the median plus range. Without remounting MFS, changing only extent.conf changes write chunk size but not the allocator preference, which would confound the experiment.",
 ]: add_para(doc, text)
+add_table(doc, ["Requested zones", "Searches", "Preferred-run hits", "Fallbacks"], [
+    ["1", "0", "0", "0"],
+    ["2", "6", "6", "0"],
+    ["4", "6", "6", "0"],
+    ["8", "6", "6", "0"],
+    ["16", "6", "6", "0"],
+    ["32", "6", "6", "0"],
+], [2100, 2100, 3000, 2160])
+add_para(doc, "The real MFS matrix used a disposable 64 MiB image on /dev/vnd0 and remounted it for every preference. It produced 18 benchmark rows and zero verification errors. The 3.3 timer is coarse enough that some short operations round to zero microseconds, so allocator hit/fallback counters and data correctness are stronger evidence than small throughput differences in this run.")
 
 doc.add_heading("6. Integrated experimental method", level=1)
 steps = [
@@ -330,7 +338,7 @@ files = [
     ("run_schedexperiments.sh", "varies base quantum while preserving workload", "adds quantum as an explicit matrix column", "four-quantum CSV audit"),
     ("vmexperiment/config.c", "parses address geometry, frames, policy, and trace definition", "enforce exact bit sum and power-of-two page size", "valid and deliberately invalid configurations"),
     ("vmexperiment/simulator.c", "builds sparse page paths, traces, frames, FIFO, and LRU", "use byte addresses and deterministic stamps", "known reference-string oracle"),
-    ("vmexperiment/vmexperiment.c", "collects real VM context and writes distinct simulated metrics", "do not claim simulator faults are hardware faults", "CSV real-page-size field on MINIX"),
+    ("vmexperiment/vmexperiment.c", "runs both policies and writes distinct simulated metrics", "do not claim simulator faults are hardware faults", "native known trace plus 72-row matrix"),
     ("run_vmexperiments.sh", "generates controlled page-size and hierarchy cases", "hold byte workload and frames constant", "matrix row and configuration review"),
     ("mfs/cache.c", "finds a free zone run and biases first-zone allocation", "scan read-only and retain safe fallback", "mount counters plus file verification"),
     ("mfs/super.c", "honors the exact origin bit inside the first bitmap word", "reset offset after the first word and preserve wrap bounds", "fragmented scratch-image allocation cases"),
@@ -338,7 +346,7 @@ files = [
     ("mfs/mount.c", "reports search, hit, and fallback counters at unmount", "report before resetting mounted state", "captured console output"),
     ("extentexperiment/config.c", "parses sizes, repetitions, paths, and safety limits", "prevent overflow and excessive buffers/files", "known.conf and boundary inputs"),
     ("extentexperiment.c", "performs real directory and verified file I/O", "clean up only owned paths on every error", "two-row smoke test with zero errors"),
-    ("run_extent_matrix.sh", "collects six extent sizes in a combined CSV", "apply matching mount preference outside the script", "18-row expected matrix"),
+    ("run_extent_matrix.sh", "remounts a scratch MFS device and collects six extent sizes", "never target a system filesystem", "18 measured rows plus MFS counters"),
     ("etc/*.conf", "provides editable, documented defaults", "separate service option from benchmark option", "copy, parse, and record with results"),
     ("commands/Makefile", "includes all three experiment command directories", "use native BSD make recursion", "top-level command build"),
     ("etc/Makefile", "installs all three configuration files", "retain existing file list formatting", "make install and /etc inspection"),
@@ -389,7 +397,7 @@ doc.add_heading("10. Conclusions", level=1)
 for text in [
     "The project delivers one coherent experimental framework across three operating-system topics. The scheduling command demonstrates how service order changes individual and average latency even when total CPU demand is fixed. The paging command demonstrates how locality, page geometry, frame capacity, hierarchy overhead, and replacement policy interact. The MFS modification demonstrates how a small change at the bitmap allocation boundary can influence physical placement while preserving file-system format and correctness.",
     "The strongest engineering choice is explicit separation of model, mechanism, and evidence. Real children execute scheduler work, but logical policy time remains reproducible. Configurable page tables are real software data structures, but the report does not misidentify them as x86 hardware mappings. Extent selection changes actual MFS placement, but it does not pretend to introduce a persistent extent tree. These boundaries make the work explainable, testable, and safer to demonstrate.",
-    "Final acceptance depends on the short native MINIX run. Successful compilation, three passing smoke tests, three matrix CSV files, zero extent verification errors, and captured MFS counters will convert the current source-complete state into a fully measured submission. The repository, README, report, and presentation are structured so those results can be inserted without changing the implementation narrative or inventing data.",
+    "Final native acceptance is complete. MINIX 3.3.0 built all three commands and the modified MFS server, all smoke tests passed, the repository contains all three raw matrices, every extent verification count is zero, and the captured MFS counters show preferred-run hits without fallbacks for sizes 2 through 32. These artifacts convert the source-complete project into a measured, reproducible submission.",
 ]: add_para(doc, text)
 
 doc.add_heading("References", level=1)
