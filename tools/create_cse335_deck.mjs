@@ -274,7 +274,7 @@ function metric(slide, x, y, w, label, value, sub) {
   const s = deck.slides.add();
   title(s, "Native verification is complete", "Submission status", 11);
   metric(s, 48, 184, 350, "Source", "Complete", "three requirements committed");
-  metric(s, 465, 184, 350, "Report", "9,906", "words · 27 rendered pages");
+  metric(s, 465, 184, 350, "Report", "1,256", "words · 7 rendered pages");
   metric(s, 882, 184, 350, "VM evidence", "Complete", "3 tests · 170 data rows");
   text(s, "Archived native evidence", 48, 424, 580, 34, 23, { bold: true });
   text(s, "1  scheduling matrix · 80 rows\n2  paging matrix · 72 rows\n3  extent matrix · 18 rows · zero errors\n4  MFS preferred-run hits · zero fallbacks", 48, 476, 650, 142, 21);
