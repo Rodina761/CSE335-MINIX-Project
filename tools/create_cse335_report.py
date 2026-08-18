@@ -306,7 +306,7 @@ table(doc, ["Area", "Main edited files", "Purpose"], [
 ], [1600, 3900, 3900])
 doc.add_heading("8. Conclusion", 1)
 para(doc, "All three requirements were built and executed in MINIX 3.3.0. The native correctness gate passed for scheduling, FIFO/LRU paging, and extent file/directory I/O. The matrices contain 80 scheduling rows, 72 paging rows, and 18 extent rows; their checksums are preserved. Requirement 1 demonstrates responsiveness versus dispatch cost, Requirement 2 shows lower LRU faults for the chosen locality workload, and Requirement 3 confirms successful contiguous-run preference with safe fallback and correct data.")
-para(doc, "Limitations are explicit: scheduler dispatches are experiment events rather than kernel context-switch counters; paging faults are simulated rather than hardware telemetry; and coarse MINIX timing weakens very short throughput measurements. These do not invalidate deterministic correctness or configuration-controlled comparisons.")
+para(doc, "Limitations are explicit: scheduler dispatches are experiment events rather than kernel context-switch counters; paging faults are simulated rather than hardware telemetry; and coarse MINIX timing weakens very short throughput measurements. These do not invalidate deterministic correctness or configuration-controlled comparisons. Archived matrices remain tied to configuration, test oracles, and checksums for independent reproducibility.")
 doc.add_heading("Submission evidence", 2)
 for item in ["Raw results: project-deliverables/native-results/*.csv and native-validation.txt", "Source comparison: git diff baseline-v3.3.0..HEAD"]:
     doc.add_paragraph(item, style="List Bullet")
