@@ -27,5 +27,10 @@ deterministic tests passed, and 173 CSV lines were archived with checksums. The
 extent run used a disposable vnode-backed image; all 18 rows had zero data
 verification errors and MFS reported zero allocation fallbacks.
 
+Final post-build validation: all four components rebuilt cleanly, the three
+experiment commands installed with exit 0, and all three deterministic tests
+passed again from the freshly installed binaries. Detailed results and console
+evidence are in `project-deliverables/native-results/FINAL_TEST_RESULTS.md`.
+
 Report QA: 9,137 words and 30 rendered pages. Presentation QA: 12 rendered
 slides.
