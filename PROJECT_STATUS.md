@@ -19,9 +19,10 @@
 - [x] Deterministic smoke tests and matrix scripts
 - [ ] Build and execute in the student's MINIX 3.3 VM
 - [ ] Import final measured CSV files into the report
-- [ ] Final visual/word-count QA of DOCX report and PPTX
+- [x] Final visual/word-count QA of DOCX report and PPTX
 - [ ] Create source archive and push private GitHub repository
 
-The unchecked VM item is deliberately explicit: source inspection on Windows is
+Report QA: 9,956 words and 27 rendered pages. Presentation QA: 12 rendered
+slides. The unchecked VM item is deliberately explicit: source inspection on Windows is
 not a substitute for compiling and running against MINIX headers, libraries,
 servers, and a scratch MFS device.
