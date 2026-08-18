@@ -36,6 +36,185 @@ Important functions in `scheduler.c`:
 - `select_mlfq()` chooses the oldest ready job in the highest available queue.
 - `schedule_run()` is the main dispatch loop and metric collector.
 
+## Exact code to study
+
+These are the source blocks most likely to be opened during the discussion.
+Line numbers refer to the submitted commit.
+
+### 1. Real process creation — `scheduler.c:134-182`
+
+```c
+for (index = 0; index < cfg->job_count; index++) {
+	int command_pipe[2];
+	int reply_pipe[2];
+	pid_t pid;
+
+	states[index].cfg = &cfg->jobs[index];
+	states[index].remaining_ms = cfg->jobs[index].burst_ms;
+	states[index].command_fd = -1;
+	states[index].reply_fd = -1;
+	states[index].queue_stamp = index;
+	if (pipe(command_pipe) != 0) {
+		snprintf(error, error_size, "pipe failed: %s", strerror(errno));
+		close_children(states, index, 1);
+		return -1;
+	}
+	if (pipe(reply_pipe) != 0) {
+		snprintf(error, error_size, "pipe failed: %s", strerror(errno));
+		close(command_pipe[0]);
+		close(command_pipe[1]);
+		close_children(states, index, 1);
+		return -1;
+	}
+	pid = fork();
+	if (pid < 0) {
+		snprintf(error, error_size, "fork failed: %s", strerror(errno));
+		close(command_pipe[0]);
+		close(command_pipe[1]);
+		close(reply_pipe[0]);
+		close(reply_pipe[1]);
+		close_children(states, index, 1);
+		return -1;
+	}
+	if (pid == 0) {
+		unsigned int prior;
+
+		close(command_pipe[1]);
+		close(reply_pipe[0]);
+		for (prior = 0; prior < index; prior++) {
+			close(states[prior].command_fd);
+			close(states[prior].reply_fd);
+		}
+		child_main(command_pipe[0], reply_pipe[1],
+		    cfg->jobs[index].burst_ms, cfg->work_scale);
+	}
+	close(command_pipe[0]);
+	close(reply_pipe[1]);
+	states[index].pid = pid;
+	states[index].command_fd = command_pipe[1];
+	states[index].reply_fd = reply_pipe[0];
+}
+```
+
+What it proves: there is one real `fork()` per configured process and two pipes
+for parent-to-child commands and child-to-parent acknowledgements.
+
+Likely question: **Why close unused pipe ends?** To avoid descriptor leaks and,
+more importantly, to ensure EOF and blocking behavior work correctly; an extra
+open writer could prevent a reader from ever seeing EOF.
+
+### 2. The four selectors — `scheduler.c:211-275`
+
+```c
+/* RR: rotate the cursor after selecting a ready process. */
+for (offset = 0; offset < count; offset++) {
+	index = (*cursor + offset) % count;
+	if (ready(&states[index], now)) {
+		*cursor = (index + 1) % count;
+		return (int)index;
+	}
+}
+
+/* SJF: minimum remaining burst, then earlier arrival. */
+if (ready(&states[index], now) && (selected < 0 ||
+    states[index].remaining_ms < states[selected].remaining_ms ||
+    (states[index].remaining_ms == states[selected].remaining_ms &&
+    states[index].cfg->arrival_ms < states[selected].cfg->arrival_ms)))
+	selected = (int)index;
+
+/* Priority: smaller numeric priority wins, then earlier arrival. */
+if (ready(&states[index], now) && (selected < 0 ||
+    states[index].cfg->priority < states[selected].cfg->priority ||
+    (states[index].cfg->priority == states[selected].cfg->priority &&
+    states[index].cfg->arrival_ms < states[selected].cfg->arrival_ms)))
+	selected = (int)index;
+
+/* MLFQ: highest queue first, then oldest queue stamp. */
+if (ready(&states[index], now) && (selected < 0 ||
+    states[index].queue_level < states[selected].queue_level ||
+    (states[index].queue_level == states[selected].queue_level &&
+    states[index].queue_stamp < states[selected].queue_stamp)))
+	selected = (int)index;
+```
+
+These are exact decision expressions from the four selector functions. The
+repeated `ready()` condition prevents a process from running before arrival.
+
+Likely question: **How are ties made deterministic?** SJF and priority use
+arrival time; MLFQ uses a monotonically increasing queue stamp; RR uses the
+rotating cursor.
+
+### 3. Dispatch, slice selection, and MLFQ demotion — `scheduler.c:320-383`
+
+```c
+if (algorithm == SCHED_RR)
+	selected = select_rr(states, cfg->job_count, now, &cursor);
+else if (algorithm == SCHED_SJF)
+	selected = select_sjf(states, cfg->job_count, now);
+else if (algorithm == SCHED_PRIORITY)
+	selected = select_priority(states, cfg->job_count, now);
+else
+	selected = select_mlfq(states, cfg->job_count, now);
+
+if (algorithm == SCHED_SJF || algorithm == SCHED_PRIORITY)
+	slice = states[selected].remaining_ms;
+else if (algorithm == SCHED_RR)
+	slice = cfg->quantum_ms;
+else
+	slice = cfg->mlfq_quantum[states[selected].queue_level];
+if (slice > states[selected].remaining_ms)
+	slice = states[selected].remaining_ms;
+
+command.run_ms = slice;
+if (write_full(states[selected].command_fd, &command,
+    sizeof(command)) != 0 ||
+    read_full(states[selected].reply_fd, &reply, sizeof(reply)) != 0 ||
+    reply.completed_ms != slice) {
+	snprintf(error, error_size, "worker %s failed",
+	    states[selected].cfg->name);
+	close_children(states, cfg->job_count, 1);
+	return -1;
+}
+
+now += slice;
+states[selected].remaining_ms -= slice;
+result->context_switches++;
+
+/* Executed when an MLFQ job still has remaining work. */
+if (states[selected].queue_level + 1 < SCHED_MLFQ_LEVELS)
+	states[selected].queue_level++;
+states[selected].queue_stamp = stamp++;
+```
+
+Likely question: **Why do SJF and priority run the entire remainder?** Because
+the implemented versions are explicitly non-preemptive. RR and MLFQ use quanta.
+
+### 4. Metric calculation — `scheduler.c:392-408`
+
+```c
+job = &result->jobs[index];
+strcpy(job->name, cfg->jobs[index].name);
+job->arrival_ms = cfg->jobs[index].arrival_ms;
+job->burst_ms = cfg->jobs[index].burst_ms;
+job->priority = cfg->jobs[index].priority;
+job->start_ms = states[index].start_ms;
+job->completion_ms = states[index].completion_ms;
+job->turnaround_ms = job->completion_ms - job->arrival_ms;
+job->waiting_ms = job->turnaround_ms - job->burst_ms;
+job->response_ms = job->start_ms - job->arrival_ms;
+result->average_turnaround_ms += job->turnaround_ms;
+result->average_waiting_ms += job->waiting_ms;
+result->average_response_ms += job->response_ms;
+
+result->average_turnaround_ms /= cfg->job_count;
+result->average_waiting_ms /= cfg->job_count;
+result->average_response_ms /= cfg->job_count;
+```
+
+Likely question: **Why is waiting `turnaround - burst`?** Turnaround contains
+both time executing and time not executing; subtracting total CPU burst leaves
+the logical time spent waiting.
+
 ## Configuration to know
 
 ```ini

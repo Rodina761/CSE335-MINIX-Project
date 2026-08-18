@@ -34,6 +34,147 @@ Important functions:
 - `access_page()` counts references, hits, faults, and replacements.
 - Trace generators create sequential, random, locality, or file-based input.
 
+## Exact code to study
+
+### 1. Configuration geometry gate — `config.c:271-278`
+
+```c
+if (hierarchy_bits + offset_bits != cfg->address_bits) {
+	snprintf(error, error_size,
+	    "sum(level_bits) + log2(page_size) must equal address_bits");
+	return -1;
+}
+if (cfg->frames == 0) {
+	snprintf(error, error_size, "frames must be greater than zero");
+	return -1;
+}
+```
+
+Likely question: **Why must the sum be exact?** Every address bit must belong to
+exactly one level index or the page offset. Missing or overlapping bits would
+make translation ambiguous.
+
+### 2. Extracting a hierarchy index — `simulator.c:212-223`
+
+```c
+static uint64_t level_index(const struct vmexp_config *cfg,
+	uint64_t virtual_page, unsigned int wanted_level)
+{
+	unsigned int level;
+	unsigned int lower_bits;
+	uint64_t mask;
+
+	lower_bits = 0;
+	for (level = wanted_level + 1; level < cfg->levels; level++)
+		lower_bits += cfg->level_bits[level];
+	mask = ((uint64_t)1 << cfg->level_bits[wanted_level]) - 1;
+	return (virtual_page >> lower_bits) & mask;
+}
+```
+
+The shift discards indices below the requested level; the mask keeps only that
+level's configured width.
+
+Likely question: **Why pass a virtual page rather than a byte address?** Page
+offset bits are removed first by dividing the byte address by page size.
+
+### 3. Sparse hierarchy creation — `simulator.c:236-262`
+
+```c
+node = sim->root;
+for (level = 0; level < sim->cfg->levels; level++) {
+	index = level_index(sim->cfg, virtual_page, level);
+	slot = slot_find(node, index);
+	if (slot == NULL) {
+		if (!create)
+			return NULL;
+		slot = slot_create(sim, node, index);
+		if (slot == NULL)
+			return NULL;
+		if (level + 1 == sim->cfg->levels) {
+			page = calloc(1, sizeof(*page));
+			if (page == NULL)
+				return NULL;
+			page->virtual_page = virtual_page;
+			slot->value = page;
+			sim->result.page_table_bytes += sizeof(*page);
+		} else {
+			child = node_create(sim, level + 1);
+			if (child == NULL)
+				return NULL;
+			slot->value = child;
+		}
+	}
+	if (level + 1 == sim->cfg->levels)
+		return (struct page_entry *)slot->value;
+	node = (struct table_node *)slot->value;
+}
+```
+
+Likely question: **Why call it sparse?** `slot_create()` and `node_create()` are
+called only after a referenced index is missing; untouched address regions
+consume no lower-level nodes.
+
+### 4. FIFO/LRU victim selection — `simulator.c:274-292`
+
+```c
+for (frame = 0; frame < sim->cfg->frames; frame++) {
+	if (sim->frames[frame] == NULL)
+		return frame;
+}
+selected = 0;
+selected_time = policy == POLICY_FIFO ?
+    sim->frames[0]->loaded_at : sim->frames[0]->last_access;
+for (frame = 1; frame < sim->cfg->frames; frame++) {
+	uint64_t candidate_time;
+
+	candidate_time = policy == POLICY_FIFO ?
+	    sim->frames[frame]->loaded_at :
+	    sim->frames[frame]->last_access;
+	if (candidate_time < selected_time) {
+		selected = frame;
+		selected_time = candidate_time;
+	}
+}
+return selected;
+```
+
+Likely question: **What is the only policy-dependent line?** The timestamp:
+FIFO compares `loaded_at`; LRU compares `last_access`. Both first use empty
+frames before evicting anything.
+
+### 5. Hit, fault, and replacement accounting — `simulator.c:303-325`
+
+```c
+virtual_page = address / sim->cfg->page_size;
+page = page_lookup(sim, virtual_page, 1);
+if (page == NULL)
+	return -1;
+sim->tick++;
+sim->result.references++;
+if (page->present) {
+	sim->result.hits++;
+	page->last_access = sim->tick;
+	return 0;
+}
+sim->result.page_faults++;
+frame = select_frame(sim, policy);
+victim = sim->frames[frame];
+if (victim != NULL) {
+	victim->present = 0;
+	sim->result.replacements++;
+}
+page->present = 1;
+page->frame = frame;
+page->loaded_at = sim->tick;
+page->last_access = sim->tick;
+sim->frames[frame] = page;
+```
+
+Likely question: **Why is every replacement a fault but not every fault a
+replacement?** An initial load into an empty frame faults without evicting a
+resident page.
+
 ## Address geometry
 
 If address width is `A`, page size is `2^p`, and hierarchy index widths are

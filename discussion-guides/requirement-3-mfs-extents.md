@@ -41,6 +41,165 @@ a disposable MFS image.
 | `minix/commands/extentexperiment/` | Real directory and verified file-I/O benchmark |
 | `run_extent_matrix.sh` | Remounts scratch MFS for sizes 1, 2, 4, 8, 16, 32 |
 
+## Exact code to study
+
+### 1. Finding consecutive free zone bits — `cache.c:47-75`
+
+```c
+static bit_t find_zone_run_range(struct super_block *sp, bit_t first,
+  bit_t limit, unsigned int length)
+{
+  bit_t candidate, probe;
+  unsigned int offset;
+
+  candidate = first < 1 ? 1 : first;
+  while (candidate < limit && (bit_t) length <= limit - candidate) {
+	for (offset = 0; offset < length; offset++) {
+	  probe = candidate + (bit_t) offset;
+	  if (!zone_bit_is_free(sp, probe)) break;
+	}
+	if (offset == length) return(candidate);
+	candidate += (bit_t) offset + 1;
+  }
+  return(NO_BIT);
+}
+
+static bit_t find_zone_run(struct super_block *sp, bit_t origin,
+  unsigned int length)
+{
+  bit_t map_bits, found;
+
+  map_bits = (bit_t) (sp->s_zones - (sp->s_firstdatazone - 1));
+  if (origin >= map_bits) origin = 1;
+  found = find_zone_run_range(sp, origin, map_bits, length);
+  if (found == NO_BIT && origin > 1)
+	found = find_zone_run_range(sp, 1, origin, length);
+  return(found);
+}
+```
+
+Likely question: **How does the scan wrap?** It first searches from the normal
+origin to the end; if unsuccessful, it searches from bit 1 back to the origin.
+
+### 2. Connecting the run to normal allocation — `cache.c:101-119`
+
+```c
+if (z == sp->s_firstdatazone) {
+	bit = sp->s_zsearch;
+} else {
+	bit = (bit_t) (z - (sp->s_firstdatazone - 1));
+}
+if (mfs_extent_size > 1 && z == sp->s_firstdatazone) {
+	bit_t run;
+
+	mfs_extent_searches++;
+	run = find_zone_run(sp, bit, mfs_extent_size);
+	if (run != NO_BIT) {
+	  bit = run;
+	  mfs_extent_hits++;
+	} else {
+	  mfs_extent_fallbacks++;
+	}
+}
+b = alloc_bit(sp, ZMAP, bit);
+```
+
+This is the core modification: the new code chooses a better origin, but the
+existing `alloc_bit()` remains the only operation that marks a zone allocated.
+
+Likely question: **Where is the safe fallback?** If `find_zone_run()` returns
+`NO_BIT`, `bit` is not replaced, and `alloc_bit()` receives the original search
+origin.
+
+### 3. Honoring the exact origin bit — `super.c:64-108`
+
+```c
+block = (block_t) (origin / FS_BITS_PER_BLOCK(sp->s_block_size));
+word = (origin % FS_BITS_PER_BLOCK(sp->s_block_size)) / FS_BITCHUNK_BITS;
+first_bit = origin % FS_BITCHUNK_BITS;
+
+for (wptr = &b_bitmap(bp)[word]; wptr < wlim; wptr++) {
+	if (*wptr == (bitchunk_t) ~0) {
+		first_bit = 0;
+		continue;
+	}
+
+	k = (bitchunk_t) conv4(sp->s_native, (int) *wptr);
+	for (i = first_bit; i < FS_BITCHUNK_BITS &&
+	    (k & (1 << i)) != 0; ++i) {}
+	first_bit = 0;
+	if (i == FS_BITCHUNK_BITS) continue;
+
+	b = ((bit_t) block * FS_BITS_PER_BLOCK(sp->s_block_size))
+	    + (wptr - &b_bitmap(bp)[0]) * FS_BITCHUNK_BITS
+	    + i;
+	if (b >= map_bits) break;
+
+	k |= 1 << i;
+	*wptr = (bitchunk_t) conv4(sp->s_native, (int) k);
+	MARKDIRTY(bp);
+	put_block(bp, MAP_BLOCK);
+	if(map == ZMAP) {
+		used_blocks++;
+		lmfs_blockschange(sp->s_dev, 1);
+	}
+	return(b);
+}
+```
+
+Likely question: **Why reset `first_bit` to zero?** The offset applies only to
+the first bitmap word. Every later word must be scanned from its first bit.
+
+### 4. Reading the MFS service option — `main.c:35-43`
+
+```c
+env_setargs(argc, argv);
+mfs_extent_size = 1;
+extent_size = 1;
+if (env_parse("mfs_extent_size", "d", 0, &extent_size, 1, 1024) ==
+    EP_SET)
+	mfs_extent_size = (unsigned int) extent_size;
+printf("MFS: extent allocation preference is %u zone(s)\n",
+	mfs_extent_size);
+```
+
+Likely question: **What happens without the option?** The default is one zone,
+which bypasses the run search and preserves ordinary behavior.
+
+### 5. Real read-back verification — `extentexperiment.c:176-223`
+
+```c
+verify_errors = 0;
+gettimeofday(&read_start, NULL);
+for (offset = 0; offset < total_bytes; offset += chunk_size) {
+	size_t amount;
+
+	amount = chunk_size;
+	if ((unsigned long long)amount > total_bytes - offset)
+		amount = (size_t)(total_bytes - offset);
+	if (read_full(fd, buffer, amount) != 0) {
+		snprintf(error, error_size, "read failed: %s", strerror(errno));
+		close(fd);
+		unlink(filepath);
+		rmdir(subdir);
+		free(buffer);
+		return -1;
+	}
+	verify_errors += verify_pattern(buffer, amount, offset, iteration);
+}
+
+fprintf(csv, "%.3f,%.3f,%u\n", throughput_mib(total_bytes, write_us),
+    throughput_mib(total_bytes, read_us), verify_errors);
+if (verify_errors != 0) {
+	snprintf(error, error_size, "%u data verification errors",
+	    verify_errors);
+	return -1;
+}
+```
+
+Likely question: **Why is byte verification more important than throughput?** A
+fast write/read result is meaningless if the returned data is corrupted.
+
 ## What changed in the allocator
 
 Stock `alloc_zone()` converts a preferred physical zone into a zone-bitmap bit
