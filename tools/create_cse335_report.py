@@ -213,6 +213,7 @@ table(doc, ["Name", "Student ID"], [
     ["Mohamed Ehab Abdelbary Ibrahem", "2300570"],
     ["Abdelrahman Ashour Hassan", "2101736"],
     ["Mostafa Hamdy Mohamed Elzoghby", "2300672"],
+    ["Rodina Mohamed", "23P0191"],
 ], [6600, 2700])
 doc.add_page_break()
 
@@ -336,7 +337,8 @@ for reference in [
 doc.core_properties.title = "CSE335 MINIX 3.3.0 Implementation and Native Test Report"
 doc.core_properties.author = (
     "Jana Ahmed Saieed; Mohamed Ehab Abdelbary Ibrahem; "
-    "Abdelrahman Ashour Hassan; Mostafa Hamdy Mohamed Elzoghby"
+    "Abdelrahman Ashour Hassan; Mostafa Hamdy Mohamed Elzoghby; "
+    "Rodina Mohamed"
 )
 doc.save(OUT)
 print(f"Created {OUT}")
