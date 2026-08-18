@@ -191,9 +191,9 @@ int fs_unmount()
   lmfs_invalidate(fs_dev);
 
   /* Finish off the unmount. */
+  mfs_extent_report();
   superblock.s_dev = NO_DEV;
   unmountdone = TRUE;
 
   return(OK);
 }
-

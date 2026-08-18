@@ -30,9 +30,17 @@ int main(int argc, char *argv[])
  * sending the reply. The loop never terminates, unless a panic occurs.
  */
   int error = OK, ind, transid;
+  long extent_size;
 
   /* SEF local startup. */
   env_setargs(argc, argv);
+  mfs_extent_size = 1;
+  extent_size = 1;
+  if (env_parse("mfs_extent_size", "d", 0, &extent_size, 1, 1024) ==
+	EP_SET)
+	mfs_extent_size = (unsigned int) extent_size;
+  printf("MFS: extent allocation preference is %u zone(s)\n",
+	mfs_extent_size);
   sef_local_startup();
 
   while(!unmountdone || !exitsignaled) {
@@ -201,4 +209,3 @@ static void cch_check(void)
   }
 }
 #endif
-

@@ -40,7 +40,7 @@ bit_t origin;			/* number of bit to start searching at */
   block_t block;
   bit_t map_bits;		/* how many bits are there in the bit map? */
   short bit_blocks;		/* how many blocks are there in the bit map? */
-  unsigned word, bcount;
+  unsigned word, bcount, first_bit;
   struct buf *bp;
   bitchunk_t *wptr, *wlim, k;
   bit_t i, b;
@@ -64,6 +64,7 @@ bit_t origin;			/* number of bit to start searching at */
   /* Locate the starting place. */
   block = (block_t) (origin / FS_BITS_PER_BLOCK(sp->s_block_size));
   word = (origin % FS_BITS_PER_BLOCK(sp->s_block_size)) / FS_BITCHUNK_BITS;
+  first_bit = origin % FS_BITCHUNK_BITS;
 
   /* Iterate over all blocks plus one, because we start in the middle. */
   bcount = bit_blocks + 1;
@@ -74,12 +75,18 @@ bit_t origin;			/* number of bit to start searching at */
 	/* Iterate over the words in block. */
 	for (wptr = &b_bitmap(bp)[word]; wptr < wlim; wptr++) {
 
-		/* Does this word contain a free bit? */
-		if (*wptr == (bitchunk_t) ~0) continue;
+	/* Does this word contain a free bit? */
+		if (*wptr == (bitchunk_t) ~0) {
+			first_bit = 0;
+			continue;
+		}
 
 		/* Find and allocate the free bit. */
 		k = (bitchunk_t) conv4(sp->s_native, (int) *wptr);
-		for (i = 0; (k & (1 << i)) != 0; ++i) {}
+		for (i = first_bit; i < FS_BITCHUNK_BITS &&
+		    (k & (1 << i)) != 0; ++i) {}
+		first_bit = 0;
+		if (i == FS_BITCHUNK_BITS) continue;
 
 		/* Bit number from the start of the bit map. */
 		b = ((bit_t) block * FS_BITS_PER_BLOCK(sp->s_block_size))

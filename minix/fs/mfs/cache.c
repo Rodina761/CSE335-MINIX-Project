@@ -26,6 +26,55 @@
 #include "super.h"
 #include "inode.h"
 
+static int zone_bit_is_free(struct super_block *sp, bit_t bit)
+{
+  block_t start_block, block;
+  unsigned int word, shift;
+  bitchunk_t value;
+  struct buf *bp;
+
+  start_block = START_BLOCK + sp->s_imap_blocks;
+  block = (block_t) (bit / FS_BITS_PER_BLOCK(sp->s_block_size));
+  word = (bit % FS_BITS_PER_BLOCK(sp->s_block_size)) /
+	FS_BITCHUNK_BITS;
+  shift = bit % FS_BITCHUNK_BITS;
+  bp = get_block(sp->s_dev, start_block + block, NORMAL);
+  value = (bitchunk_t) conv4(sp->s_native, (int) b_bitmap(bp)[word]);
+  put_block(bp, MAP_BLOCK);
+  return (value & ((bitchunk_t) 1 << shift)) == 0;
+}
+
+static bit_t find_zone_run_range(struct super_block *sp, bit_t first,
+  bit_t limit, unsigned int length)
+{
+  bit_t candidate, probe;
+  unsigned int offset;
+
+  candidate = first < 1 ? 1 : first;
+  while (candidate < limit && (bit_t) length <= limit - candidate) {
+	for (offset = 0; offset < length; offset++) {
+	  probe = candidate + (bit_t) offset;
+	  if (!zone_bit_is_free(sp, probe)) break;
+	}
+	if (offset == length) return(candidate);
+	candidate += (bit_t) offset + 1;
+  }
+  return(NO_BIT);
+}
+
+static bit_t find_zone_run(struct super_block *sp, bit_t origin,
+  unsigned int length)
+{
+  bit_t map_bits, found;
+
+  map_bits = (bit_t) (sp->s_zones - (sp->s_firstdatazone - 1));
+  if (origin >= map_bits) origin = 1;
+  found = find_zone_run_range(sp, origin, map_bits, length);
+  if (found == NO_BIT && origin > 1)
+	found = find_zone_run_range(sp, 1, origin, length);
+  return(found);
+}
+
 /*===========================================================================*
  *				alloc_zone				     *
  *===========================================================================*/
@@ -55,6 +104,18 @@ zone_t alloc_zone(
   } else {
 	bit = (bit_t) (z - (sp->s_firstdatazone - 1));
   }
+  if (mfs_extent_size > 1 && z == sp->s_firstdatazone) {
+	bit_t run;
+
+	mfs_extent_searches++;
+	run = find_zone_run(sp, bit, mfs_extent_size);
+	if (run != NO_BIT) {
+	  bit = run;
+	  mfs_extent_hits++;
+	} else {
+	  mfs_extent_fallbacks++;
+	}
+  }
   b = alloc_bit(sp, ZMAP, bit);
   if (b == NO_BIT) {
 	err_code = ENOSPC;
@@ -67,6 +128,13 @@ zone_t alloc_zone(
   print_oos_msg = 1;
   if (z == sp->s_firstdatazone) sp->s_zsearch = b;	/* for next time */
   return( (zone_t) (sp->s_firstdatazone - 1) + (zone_t) b);
+}
+
+void mfs_extent_report(void)
+{
+  printf("MFS extent stats: size=%u searches=%lu hits=%lu fallbacks=%lu\n",
+	mfs_extent_size, mfs_extent_searches, mfs_extent_hits,
+	mfs_extent_fallbacks);
 }
 
 /*===========================================================================*
@@ -89,5 +157,4 @@ void free_zone(
   free_bit(sp, ZMAP, bit);
   if (bit < sp->s_zsearch) sp->s_zsearch = bit;
 }
-
 

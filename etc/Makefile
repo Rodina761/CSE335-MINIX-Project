@@ -93,9 +93,10 @@ BINGRP= operator
 UTMPGRP= utmp
 .if defined(__MINIX)
 BIN1+=	boot.cfg.default \
+	extent.conf \
 	man.conf \
 	paging.conf \
-	protocols rc rc.cd rc.subr \
+	protocols rc rc.cd rc.subr scheduler.conf \
 	rc.daemons.dist rs.inet rs.single \
 	services shells syslog.conf \
 	termcap utmp gettytab rc.shutdown

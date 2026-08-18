@@ -38,4 +38,10 @@ EXTERN char fs_dev_label[16];	/* Name of the device driver that is handled
 EXTERN int unmountdone;
 EXTERN int exitsignaled;
 
+/* CSE335 extent-aware allocation experiment. */
+EXTERN unsigned int mfs_extent_size;
+EXTERN unsigned long mfs_extent_searches;
+EXTERN unsigned long mfs_extent_hits;
+EXTERN unsigned long mfs_extent_fallbacks;
+
 #endif

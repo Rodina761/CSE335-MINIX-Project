@@ -17,6 +17,7 @@ struct super_block;
 /* cache.c */
 zone_t alloc_zone(dev_t dev, zone_t z);
 void free_zone(dev_t dev, zone_t numb);
+void mfs_extent_report(void);
 
 /* inode.c */
 struct inode *alloc_inode(dev_t dev, mode_t bits);
@@ -115,4 +116,3 @@ void zero_block(struct buf *bp);
 int write_map(struct inode *, off_t, zone_t, int);
 
 #endif
-

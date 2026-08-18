@@ -9,6 +9,7 @@ SUBDIR=	add_route arp at backup btrace \
 	dd decomp16 DESCRIBE devmand devsize dhcpd \
 	dhrystone diff diskctl \
 	eject fbdctl \
+	extentexperiment \
 	find fix format fsck.mfs \
 	gcov-pull grep host \
 	hostaddr ifconfig ifdef \
@@ -23,6 +24,7 @@ SUBDIR=	add_route arp at backup btrace \
 	ramdisk rarpd rawspeed rcp readclock \
 	remsync rget rlogin \
 	rotate rsh rshd service setup \
+	schedexperiment \
 	slip spell sprofalyze sprofdiff srccrc \
 	svclog svrctl swifi synctree sysenv \
 	syslogd tcpd tcpdp tcpstat telnet \
