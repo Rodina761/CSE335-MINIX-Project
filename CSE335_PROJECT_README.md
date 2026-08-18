@@ -18,8 +18,8 @@ comparison unsafe and irreproducible. The project therefore uses two techniques:
 
 - Requirements 1 and 2 are controlled user-space experiment drivers compiled
   and executed inside MINIX. Requirement 1 dispatches real child processes.
-  Requirement 2 builds real configurable page-table structures and also records
-  actual MINIX VM counters through `vm_info_stats()`.
+  Requirement 2 builds real configurable page-table structures and can record
+  actual MINIX VM counters through `vm_info_stats()` when explicitly enabled.
 - Requirement 3 changes the real MFS zone-allocation path. The MFS server accepts
   a preferred run length and selects the start of a sufficiently long free run;
   normal bitmap allocation then preserves consistency and falls back safely.
@@ -46,7 +46,9 @@ averages, logical makespan, dispatch count, and measured wall time.
 - `minix/commands/vmexperiment/run_vmexperiments.sh`: controlled matrix
 
 Metrics include faults, hits, replacements, empty frames, hierarchy nodes,
-entries and bytes, plus MINIX VM page-size/free/cache counters when available.
+entries and bytes. Set `VMEXP_REAL_STATS=1` to request MINIX VM page-size,
+free-frame, and cache counters on images where the VM_INFO call is supported;
+the default avoids an indefinite block on MINIX 3.3 images that do not reply.
 
 ### Requirement 3 — MFS extents
 

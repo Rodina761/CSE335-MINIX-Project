@@ -2,8 +2,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #ifdef __minix
+#include <minix/type.h>
 #include <minix/vm.h>
 #endif
 
@@ -32,6 +34,11 @@ static void collect_real_stats(struct real_vm_stats *stats)
 	{
 		struct vm_stats_info info;
 
+		/* Some MINIX 3.3 VM images do not reply to VM_INFO for an
+		 * unprivileged command. Keep native counters opt-in so the
+		 * deterministic experiment cannot block indefinitely. */
+		if (getenv("VMEXP_REAL_STATS") == NULL)
+			return;
 		if (vm_info_stats(&info) == 0) {
 			stats->available = 1;
 			stats->page_size = info.vsi_pagesize;
@@ -174,6 +181,7 @@ int main(int argc, char **argv)
 		}
 	}
 	config_defaults(&cfg);
+	fprintf(stderr, "vmexperiment: loading configuration\n");
 	if (config_load(config_path, &cfg, error, sizeof(error)) != 0) {
 		fprintf(stderr, "vmexperiment: %s\n", error);
 		return 1;
@@ -197,15 +205,19 @@ int main(int argc, char **argv)
 		fprintf(stderr, "vmexperiment: %s\n", error);
 		return 1;
 	}
+	fprintf(stderr, "vmexperiment: building address trace\n");
 	if (trace_build(&cfg, &addresses, &address_count,
 	    error, sizeof(error)) != 0) {
 		fprintf(stderr, "vmexperiment: %s\n", error);
 		return 1;
 	}
+	fprintf(stderr, "vmexperiment: collecting optional VM context\n");
 	collect_real_stats(&before);
+	fprintf(stderr, "vmexperiment: starting replacement simulation\n");
 	print_configuration(&cfg, &before);
 	result_count = 0;
 	if (cfg.policy == POLICY_FIFO || cfg.policy == POLICY_BOTH) {
+		fprintf(stderr, "vmexperiment: simulating FIFO\n");
 		if (simulate(&cfg, addresses, address_count, POLICY_FIFO,
 		    &results[result_count], error, sizeof(error)) != 0) {
 			fprintf(stderr, "vmexperiment: %s\n", error);
@@ -215,6 +227,7 @@ int main(int argc, char **argv)
 		print_result(&results[result_count++]);
 	}
 	if (cfg.policy == POLICY_LRU || cfg.policy == POLICY_BOTH) {
+		fprintf(stderr, "vmexperiment: simulating LRU\n");
 		if (simulate(&cfg, addresses, address_count, POLICY_LRU,
 		    &results[result_count], error, sizeof(error)) != 0) {
 			fprintf(stderr, "vmexperiment: %s\n", error);
@@ -223,6 +236,7 @@ int main(int argc, char **argv)
 		}
 		print_result(&results[result_count++]);
 	}
+	fprintf(stderr, "vmexperiment: writing CSV\n");
 	collect_real_stats(&after);
 	if (write_csv(cfg.csv_output, &cfg, results, result_count,
 	    &before, &after) != 0) {
@@ -231,5 +245,8 @@ int main(int argc, char **argv)
 	}
 	printf("CSV results written to %s\n", cfg.csv_output);
 	free(addresses);
-	return 0;
+	fprintf(stderr, "vmexperiment: complete\n");
+	/* MINIX 3.3's legacy stdio cleanup may block after VM-related work.
+	 * All durable output (the CSV) has already been closed by write_csv(). */
+	_exit(0);
 }

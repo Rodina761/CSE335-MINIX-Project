@@ -14,7 +14,9 @@ do
 		echo "algorithm=ALL"
 		echo "quantum_ms=$quantum"
 		echo "mlfq_quanta_ms=$quantum,$((quantum * 2)),$((quantum * 4))"
-		echo "work_scale=20000"
+		# Keep matrix runs practical on emulated 32-bit MINIX. Logical
+		# scheduling metrics are independent of this physical work multiplier.
+		echo "work_scale=1000"
 		echo "csv_output=$SINGLE"
 		echo "process=P1,0,80,3"
 		echo "process=P2,10,40,4"
