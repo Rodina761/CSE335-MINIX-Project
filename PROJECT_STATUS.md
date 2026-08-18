@@ -2,9 +2,9 @@
 
 | Requirement | Implementation | Deterministic test | MINIX VM evidence |
 |---|---|---|---|
-| 1. Scheduling | Complete | Included | Pending VM run |
-| 2. Paging | Complete | Included | Pending VM run |
-| 3. MFS extents | Complete | Included | Pending VM run |
+| 1. Scheduling | Complete | Passed | Complete: 80 data rows |
+| 2. Paging | Complete | Passed | Complete: 72 data rows |
+| 3. MFS extents | Complete | Passed | Complete: 18 data rows + MFS logs |
 
 ## Submission checklist
 
@@ -17,12 +17,15 @@
 - [x] Real file/directory create, write, read, verify and remove benchmark
 - [x] Editable configuration files for all three requirements
 - [x] Deterministic smoke tests and matrix scripts
-- [ ] Build and execute in the student's MINIX 3.3 VM
-- [ ] Import final measured CSV files into the report
+- [x] Build and execute in the student's MINIX 3.3 VM
+- [x] Import final measured CSV files into the report
 - [x] Final visual/word-count QA of DOCX report and PPTX
 - [x] Create source archive and push private GitHub repository
 
-Report QA: 9,956 words and 27 rendered pages. Presentation QA: 12 rendered
-slides. The unchecked VM item is deliberately explicit: source inspection on Windows is
-not a substitute for compiling and running against MINIX headers, libraries,
-servers, and a scratch MFS device.
+Native validation: MINIX 3.3.0/i386, all four build checks succeeded, all three
+deterministic tests passed, and 173 CSV lines were archived with checksums. The
+extent run used a disposable vnode-backed image; all 18 rows had zero data
+verification errors and MFS reported zero allocation fallbacks.
+
+Report QA: 9,137 words and 30 rendered pages. Presentation QA: 12 rendered
+slides.

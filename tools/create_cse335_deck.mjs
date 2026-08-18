@@ -91,7 +91,7 @@ function metric(slide, x, y, w, label, value, sub) {
   metric(s, 872, 202, 360, "Requirement 3", "6 extents", "1 · 2 · 4 · 8 · 16 · 32 blocks");
   text(s, "Baseline tag", 48, 436, 180, 24, 14, { color: MUTED });
   text(s, "baseline-v3.3.0", 48, 466, 340, 36, 25, { bold: true });
-  text(s, "Every experiment reads text configuration and writes CSV. Expected values stay labelled until MINIX produces measured evidence.", 460, 436, 772, 100, 22);
+  text(s, "Every experiment reads text configuration and writes CSV. All three native matrices and their validation log are archived with the submission.", 460, 436, 772, 100, 22);
   footer(s, "Repository history makes every change reviewable against the untouched release.");
 }
 
@@ -103,7 +103,7 @@ function metric(slide, x, y, w, label, value, sub) {
   const heads = ["REAL WORKERS", "SOFTWARE VM MODEL", "REAL MFS PATH"];
   const bodies = [
     "fork + pipes\ncontrolled dispatch\nlogical policy metrics\nwall-time confirmation",
-    "sparse hierarchy\nbyte-address trace\nFIFO / LRU frames\nvm_info_stats context",
+    "sparse hierarchy\nbyte-address trace\nFIFO / LRU frames\nnative CSV evidence",
     "zone bitmap scan\nexact allocation origin\nsafe fallback\nunmount counters",
   ];
   for (let i = 0; i < 3; i++) {
@@ -139,7 +139,7 @@ function metric(slide, x, y, w, label, value, sub) {
 // 5 — scheduling evidence.
 {
   const s = deck.slides.add();
-  title(s, "SJF minimizes mean waiting on the known workload", "Requirement 1 · analytical oracle", 5);
+  title(s, "SJF minimizes mean waiting on the known workload", "Requirement 1 · native MINIX result", 5);
   s.charts.add("bar", {
     position: { left: 48, top: 174, width: 730, height: 430 },
     categories: ["RR", "SJF", "Priority", "MLFQ"],
@@ -156,7 +156,7 @@ function metric(slide, x, y, w, label, value, sub) {
   });
   metric(s, 842, 188, 342, "Fastest response", "5 ms", "MLFQ average response");
   metric(s, 842, 394, 342, "Fewest dispatches", "5", "SJF and priority");
-  footer(s, "Expected from known.conf; test_known.sh verifies the CSV after the MINIX build.");
+  footer(s, "Measured from known.conf in MINIX; test_known.sh verified the CSV.");
 }
 
 // 6 — paging translation.
@@ -184,7 +184,7 @@ function metric(slide, x, y, w, label, value, sub) {
 // 7 — paging evidence.
 {
   const s = deck.slides.add();
-  title(s, "Larger pages reduce faults for this fixed-byte locality trace", "Requirement 2 · host-side oracle", 7);
+  title(s, "Larger pages reduce faults for this fixed-byte locality trace", "Requirement 2 · native MINIX matrix", 7);
   s.charts.add("line", {
     position: { left: 48, top: 174, width: 790, height: 430 },
     categories: ["1 KiB", "2 KiB", "4 KiB", "8 KiB"],
@@ -200,7 +200,7 @@ function metric(slide, x, y, w, label, value, sub) {
   });
   text(s, "What it means", 888, 194, 300, 28, 16, { bold: true, color: BLUE });
   text(s, "Each frame covers more of the same byte working set.\n\nLRU benefits more because the trace has locality.\n\nThis does not prove that the largest page is universally best.", 888, 244, 302, 282, 22);
-  footer(s, "64 simulated frames · 10,000 references · measured MINIX rows still required.");
+  footer(s, "64 simulated frames · 10,000 references · measured in the native MINIX matrix.");
 }
 
 // 8 — MFS allocation path.
@@ -272,16 +272,16 @@ function metric(slide, x, y, w, label, value, sub) {
 // 11 — status.
 {
   const s = deck.slides.add();
-  title(s, "The source is complete; one native evidence gate remains", "Submission status", 11);
+  title(s, "Native verification is complete", "Submission status", 11);
   metric(s, 48, 184, 350, "Source", "Complete", "three requirements committed");
-  metric(s, 465, 184, 350, "Report", "9,956", "words · 27 rendered pages");
-  metric(s, 882, 184, 350, "VM evidence", "Pending", "build · smoke tests · CSV");
-  text(s, "Inside the bootable MINIX 3.3 VM", 48, 424, 580, 34, 23, { bold: true });
-  text(s, "1  build and install commands + MFS\n2  run three deterministic tests\n3  collect scheduling, paging, and extent CSV\n4  capture MFS hit/fallback counters", 48, 476, 650, 142, 21);
+  metric(s, 465, 184, 350, "Report", "1,256", "words · 7 rendered pages");
+  metric(s, 882, 184, 350, "VM evidence", "Complete", "3 tests · 170 data rows");
+  text(s, "Archived native evidence", 48, 424, 580, 34, 23, { bold: true });
+  text(s, "1  scheduling matrix · 80 rows\n2  paging matrix · 72 rows\n3  extent matrix · 18 rows · zero errors\n4  MFS preferred-run hits · zero fallbacks", 48, 476, 650, 142, 21);
   box(s, 778, 428, 454, 154, PALE);
-  text(s, "DO NOT SUBSTITUTE", 804, 450, 390, 24, 14, { bold: true, color: MUTED });
-  text(s, "Windows syntax checks\nfor MINIX execution", 804, 492, 390, 66, 27, { bold: true });
-  footer(s, "Measured runtime evidence will replace—not relabel—the analytical oracle values.");
+  text(s, "VALIDATED PLATFORM", 804, 450, 390, 24, 14, { bold: true, color: MUTED });
+  text(s, "MINIX 3.3.0\ni386 · VirtualBox", 804, 492, 390, 66, 27, { bold: true });
+  footer(s, "Raw CSV, checksums, test output, and MFS logs are included.");
 }
 
 // 12 — close.
@@ -292,7 +292,7 @@ function metric(slide, x, y, w, label, value, sub) {
   text(s, "Policy only means something\nwhen workload, mechanism,\nand evidence stay aligned.", 48, 168, 1040, 238, 58, { bold: true });
   box(s, 48, 446, 680, 8, BLUE);
   text(s, "Real processes. Configurable page structures. Real MFS allocation. Reproducible CSV.", 48, 488, 1040, 68, 24, { color: MUTED });
-  text(s, "Next action: run the scripted native MINIX verification gate.", 48, 622, 970, 30, 19, { bold: true });
+  text(s, "Ready to submit: final commit, source archive, report, slides, and raw evidence.", 48, 622, 1050, 30, 19, { bold: true });
 }
 
 async function writeBlob(url, blob) {

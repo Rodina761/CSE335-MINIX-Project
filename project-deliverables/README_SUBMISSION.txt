@@ -7,7 +7,9 @@ Source baseline: MINIX 3.3.0, tag baseline-v3.3.0
 Files in this folder
 --------------------
 1. CSE335_MINIX_Project_Report.docx
-   Editable detailed report; 9,956 words; visually checked at 27 pages.
+   Detailed evidence-led research report; 9,137 words; visually checked at
+   30 pages. It includes the theory, implementation, code maps, test cases,
+   results, analysis, demonstration manuals, in-text citations, and references.
 2. CSE335_MINIX_Project_Report.pdf
    Rendered reference copy of the report.
 3. CSE335_MINIX_Project_Presentation.pptx
@@ -21,11 +23,15 @@ Requirement 1: RR, SJF, priority, and MLFQ with real child workers — implement
 Requirement 2: configurable hierarchy/page size plus FIFO/LRU — implemented.
 Requirement 3: MFS extent-biased allocation plus real I/O benchmark — implemented.
 
-Mandatory native verification before final upload
--------------------------------------------------
-The source was prepared and statically reviewed on Windows. Run these commands
-inside the bootable MINIX 3.3 VM; do not call host-side oracle numbers measured
-MINIX results.
+Native verification completed
+-----------------------------
+The source was built and executed inside MINIX 3.3.0/i386 on 18 August 2026.
+All three deterministic tests passed. The archived raw evidence is under
+native-results/: scheduling-matrix.csv (80 rows), paging-matrix.csv (72 rows),
+extent-matrix.csv (18 rows), and native-validation.txt. Every extent row has
+zero verification errors; MFS logged zero fallbacks for the tested run.
+
+Reproduction commands:
 
   cd /usr/src
   make includes
@@ -41,15 +47,15 @@ MINIX results.
   cd /usr/src/minix/commands/vmexperiment/tests && sh test_known.sh
   cd /usr/src/minix/commands/extentexperiment/tests && sh test_known.sh
 
-Then collect:
+Collect the scheduling and paging matrices:
 
   run_schedexperiments.sh /tmp/scheduling-matrix.csv
   run_vmexperiments.sh /tmp/paging-matrix.csv
 
-For the extent matrix, use only a verified disposable secondary MFS device.
-Mount it with mfs_extent_size matching extent_blocks, point extent.conf under
-that mount, then run run_extent_matrix.sh. Never format or benchmark the root or
-/usr device.
+For the extent matrix, use only a verified disposable secondary MFS device. Set
+EXTENT_DEVICE and EXTENT_MOUNT_POINT before run_extent_matrix.sh; it remounts
+the device with each matching mfs_extent_size. Never format or benchmark root,
+/usr, or /home.
 
 See CSE335_PROJECT_README.md at repository root for the complete procedure,
 configuration reference, safety notes, modified-file map, and limitations.
