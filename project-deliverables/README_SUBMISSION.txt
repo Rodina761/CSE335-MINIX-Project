@@ -4,6 +4,19 @@ CSE335 MINIX PROJECT — SUBMISSION PACKAGE
 Prepared: 18 August 2026
 Source baseline: MINIX 3.3.0, tag baseline-v3.3.0
 
+FILE TO SUBMIT
+--------------
+CSE335_MINIX_Project_Submission.zip
+
+This ZIP contains exactly the three deliverables named in the project PDF:
+1. CSE335_MINIX_Modified_Source.zip
+   The complete modified MINIX 3.3.0 source tree and its detailed README.txt.
+2. CSE335_MINIX_Project_Report.docx
+3. CSE335_MINIX_Project_Presentation.pptx
+
+The other files in project-deliverables/ are repository support and verification
+copies. They are intentionally not included in the submission ZIP.
+
 Files in this folder
 --------------------
 1. CSE335_MINIX_Project_Report.docx
