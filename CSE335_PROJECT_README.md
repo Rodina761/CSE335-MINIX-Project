@@ -156,3 +156,9 @@ Hierarchy bits plus offset bits must exactly equal address bits.
 
 See `PROJECT_STATUS.md` for the submission checklist and the detailed report for
 design rationale, source walkthroughs, method, results, limitations, and analysis.
+
+## Demo and oral-discussion preparation
+
+Team members should use [`discussion-guides/README.md`](discussion-guides/README.md)
+for the shared demonstration order and the requirement-specific viva questions,
+code maps, results, limitations, and claims to avoid.
