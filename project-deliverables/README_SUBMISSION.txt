@@ -10,8 +10,8 @@ Files in this folder
    Detailed evidence-led research report; 9,137 words; visually checked at
    30 pages. It includes the theory, implementation, code maps, test cases,
    results, analysis, demonstration manuals, in-text citations, and references.
-2. CSE335_MINIX_Project_Report.pdf
-   Rendered reference copy of the report.
+2. CSE335_MINIX_Project_Report_Final.pdf
+   Cleaned rendered reference copy of the report.
 3. CSE335_MINIX_Project_Presentation.pptx
    Editable 12-slide presentation; every slide rendered and checked.
 4. CSE335_MINIX_Modified_Source.zip
