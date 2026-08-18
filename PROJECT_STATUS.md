@@ -27,5 +27,5 @@ deterministic tests passed, and 173 CSV lines were archived with checksums. The
 extent run used a disposable vnode-backed image; all 18 rows had zero data
 verification errors and MFS reported zero allocation fallbacks.
 
-Report QA: 1,256 words and 7 rendered pages. Presentation QA: 12 rendered
+Report QA: 9,137 words and 30 rendered pages. Presentation QA: 12 rendered
 slides.

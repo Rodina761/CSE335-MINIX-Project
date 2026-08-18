@@ -7,7 +7,9 @@ Source baseline: MINIX 3.3.0, tag baseline-v3.3.0
 Files in this folder
 --------------------
 1. CSE335_MINIX_Project_Report.docx
-   Concise evidence-led report; 1,256 words; visually checked at 7 pages.
+   Detailed evidence-led research report; 9,137 words; visually checked at
+   30 pages. It includes the theory, implementation, code maps, test cases,
+   results, analysis, demonstration manuals, in-text citations, and references.
 2. CSE335_MINIX_Project_Report.pdf
    Rendered reference copy of the report.
 3. CSE335_MINIX_Project_Presentation.pptx

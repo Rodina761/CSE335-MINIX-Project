@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 
 from docx import Document
 from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT, WD_TABLE_ALIGNMENT
@@ -69,14 +70,8 @@ def code(doc, lines):
 def figure(doc, filename, caption, width=6.25):
     p = doc.add_paragraph()
     p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    p.paragraph_format.space_after = Pt(4)
-    p.add_run().add_picture(str(ASSETS / filename), width=Inches(width))
-    p = doc.add_paragraph()
-    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
     p.paragraph_format.space_after = Pt(9)
-    run = p.add_run(caption)
-    run.italic, run.font.size = True, Pt(8.5)
-    run.font.color.rgb = RGBColor(90, 90, 90)
+    p.add_run().add_picture(str(ASSETS / filename), width=Inches(width))
 
 
 def page_number(p):
@@ -85,6 +80,83 @@ def page_number(p):
     field = OxmlElement("w:fldSimple")
     field.set(qn("w:instr"), "PAGE")
     p._p.append(field)
+
+
+def clean_markdown(text):
+    """Convert the small inline-Markdown subset used by the project manuals."""
+    text = re.sub(r"!\[([^]]*)\]\([^)]+\)", r"\1", text)
+    text = re.sub(r"\[([^]]+)\]\([^)]+\)", r"\1", text)
+    return text.replace("**", "").replace("__", "").replace("`", "").strip()
+
+
+def append_markdown(doc, path, title=None):
+    """Append a project manual while preserving headings, lists, tables and code."""
+    if title:
+        doc.add_heading(title, 1)
+    lines = path.read_text(encoding="utf-8").splitlines()
+    i, in_code, code_lines = 0, False, []
+    while i < len(lines):
+        raw = lines[i].rstrip()
+        stripped = raw.strip()
+        if stripped.startswith("```"):
+            if in_code:
+                code(doc, code_lines)
+                code_lines = []
+            in_code = not in_code
+            i += 1
+            continue
+        if in_code:
+            code_lines.append(raw)
+            i += 1
+            continue
+        if not stripped or stripped == "---":
+            i += 1
+            continue
+        if stripped.startswith("|") and i + 1 < len(lines) and re.match(
+            r"^\s*\|?\s*:?-{3,}", lines[i + 1]
+        ):
+            headers = [clean_markdown(x) for x in stripped.strip("|").split("|")]
+            i += 2
+            rows = []
+            while i < len(lines) and lines[i].strip().startswith("|"):
+                rows.append([
+                    clean_markdown(x) for x in lines[i].strip().strip("|").split("|")
+                ])
+                i += 1
+            usable = 9400
+            widths = [usable // len(headers)] * len(headers)
+            table(doc, headers, rows, widths)
+            continue
+        heading = re.match(r"^(#{1,3})\s+(.+)$", stripped)
+        if heading:
+            level = min(len(heading.group(1)) + (1 if title else 0), 3)
+            doc.add_heading(clean_markdown(heading.group(2)), level)
+            i += 1
+            continue
+        bullet = re.match(r"^[-*]\s+(.+)$", stripped)
+        numbered = re.match(r"^\d+[.)]\s+(.+)$", stripped)
+        if bullet or numbered:
+            item = bullet.group(1) if bullet else numbered.group(1)
+            doc.add_paragraph(
+                clean_markdown(item), style="List Bullet" if bullet else "List Number"
+            )
+            i += 1
+            continue
+        paragraph = [stripped]
+        i += 1
+        while i < len(lines):
+            candidate = lines[i].strip()
+            if (
+                not candidate
+                or candidate.startswith(("#", "```", "|", "- ", "* "))
+                or re.match(r"^\d+[.)]\s+", candidate)
+            ):
+                break
+            paragraph.append(candidate)
+            i += 1
+        para(doc, clean_markdown(" ".join(paragraph)))
+    if code_lines:
+        code(doc, code_lines)
 
 
 doc = Document()
@@ -104,30 +176,50 @@ for name, size, color, before, after in [("Heading 1", 16, BLUE, 15, 7), ("Headi
     style.paragraph_format.space_before, style.paragraph_format.space_after = Pt(before), Pt(after)
     style.paragraph_format.keep_with_next = True
 header = section.header.paragraphs[0]
-header.text = "CSE335 Operating Systems Project  |  MINIX 3.3.0"
-header.runs[0].font.size = Pt(8.5)
-header.runs[0].font.color.rgb = RGBColor(95, 99, 104)
+header.text = ""
 page_number(section.footer.paragraphs[0])
 
 # Cover
 p = doc.add_paragraph()
-p.paragraph_format.space_before = Pt(105)
+p.paragraph_format.space_before = Pt(10)
+p.paragraph_format.space_after = Pt(12)
 p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-r = p.add_run("CSE335 OPERATING SYSTEMS PROJECT")
+p.add_run().add_picture(str(ASSETS / "ain-shams-cover-header.png"), width=Inches(6.55))
+p = doc.add_paragraph()
+p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+r = p.add_run("TERM PROJECT REPORT")
 r.bold, r.font.size = True, Pt(12)
 r.font.color.rgb = RGBColor.from_string(BLUE)
 p = doc.add_paragraph()
 p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+p.paragraph_format.space_after = Pt(4)
 r = p.add_run("MINIX 3.3.0\nImplementation and Native Test Report")
-r.bold, r.font.size = True, Pt(27)
+r.bold, r.font.size = True, Pt(23)
 r.font.color.rgb = RGBColor.from_string(DARK)
 p = doc.add_paragraph()
 p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-p.paragraph_format.space_after = Pt(60)
+p.paragraph_format.space_after = Pt(10)
 r = p.add_run("Scheduling • Hierarchical Paging • Extent-Aware MFS Allocation")
 r.italic, r.font.size = True, Pt(12)
-table(doc, ["Course", "Prepared by", "Term", "Validated"], [["CSE335", "Rodina and project team", "Summer 2026", "MINIX 3.3.0 VM"]], [1700, 3000, 1800, 2800])
-para(doc, "This concise report explains what was changed, how it was built and tested, and what the native MINIX run produced. Raw CSV files and the complete validation log are included under project-deliverables/native-results.")
+p = doc.add_paragraph()
+p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+p.paragraph_format.space_before = Pt(4)
+p.paragraph_format.space_after = Pt(5)
+r = p.add_run("TEAM MEMBERS")
+r.bold, r.font.size = True, Pt(11)
+r.font.color.rgb = RGBColor.from_string(BLUE)
+table(doc, ["Name", "Student ID"], [
+    ["Jana Ahmed Saieed", "24P0410"],
+    ["Mohamed Ehab Abdelbary Ibrahem", "2300570"],
+    ["Abdelrahman Ashour Hassan", "2101736"],
+    ["Mostafa Hamdy Mohamed Elzoghby", "2300672"],
+], [6600, 2700])
+p = doc.add_paragraph()
+p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+p.paragraph_format.space_before = Pt(7)
+p.paragraph_format.space_after = Pt(0)
+r = p.add_run("Validated on MINIX 3.3.0 • Oracle VirtualBox")
+r.italic, r.font.size = True, Pt(9)
 doc.add_page_break()
 
 doc.add_heading("1. Project summary", 1)
@@ -225,7 +317,32 @@ doc.add_heading("Submission evidence", 2)
 for item in ["Raw results: project-deliverables/native-results/*.csv and native-validation.txt", "Source comparison: git diff baseline-v3.3.0..HEAD", "Report builder: tools/create_cse335_report.py"]:
     doc.add_paragraph(item, style="List Bullet")
 
+doc.add_page_break()
+doc.add_heading("9. Research basis and MINIX internal structure", 1)
+para(doc, "MINIX 3 follows a microkernel architecture in which the kernel retains mechanisms that require privileged execution, while many services traditionally placed in a monolithic kernel execute as isolated user-mode processes. The process manager, virtual file-system service, memory-related services, device drivers, and concrete file-system servers communicate through explicit interprocess communication. This organization reduces the trusted kernel surface and provides fault isolation, but it also means that a modification must be placed at the correct architectural boundary. The project therefore treats the scheduler and paging requirements as controlled native experiments and places the persistent allocation-policy change in the MFS server. This interpretation is consistent with the MINIX 3 design literature and source organization [1, 2].")
+para(doc, "CPU scheduling is evaluated with turnaround time, waiting time, response time, makespan, and dispatch count. Turnaround is completion minus arrival; waiting is turnaround minus demanded CPU service; response is first start minus arrival. Round Robin emphasizes fairness through bounded quanta. Shortest Job First minimizes average waiting for a known batch under its ideal assumptions, but it can delay long jobs. Static priority scheduling expresses importance directly but can starve low-priority work without aging. A multilevel feedback queue adapts priority from observed behavior, favoring short or interactive jobs while moving CPU-bound jobs toward longer quanta. These definitions and trade-offs follow standard operating-systems treatments [3, 4].")
+para(doc, "Hierarchical paging divides a virtual address into a page offset and one index per configured level. Only leaves reached by the trace need to exist in the sparse experimental structure. FIFO replaces the page that has resided in memory longest, whereas LRU replaces the page whose latest reference is oldest. FIFO requires little history but can exhibit Belady's anomaly; stack algorithms such as LRU do not have that anomaly under the ideal reference model. The experiment reports faults, replacements, hits, remaining empty frames, hierarchy nodes, and lookup work so that replacement behavior and translation-structure cost are not confused [3, 5].")
+para(doc, "MINIX File System uses allocation bitmaps to record free and used zones. A file's inode identifies data through direct and indirect zone references, while directories are files containing name-to-inode mappings. The extent preference implemented here does not replace this format. It searches the existing zone bitmap for a user-requested contiguous free run and selects the beginning of that run as the next allocation origin. The normal bitmap allocator still performs the actual state change, which preserves existing accounting and compatibility. The design is intentionally a preference layer rather than a new persistent extent tree [1, 2].")
+
+append_markdown(doc, ROOT / "discussion-guides" / "requirement-1-scheduling.md", "10. Detailed Requirement 1 implementation and discussion manual")
+append_markdown(doc, ROOT / "discussion-guides" / "requirement-2-paging.md", "11. Detailed Requirement 2 implementation and discussion manual")
+append_markdown(doc, ROOT / "discussion-guides" / "requirement-3-mfs-extents.md", "12. Detailed Requirement 3 implementation and discussion manual")
+append_markdown(doc, ROOT / "discussion-guides" / "README.md", "13. Installation, configuration, validation and demonstration runbook")
+
+doc.add_heading("14. References", 1)
+for reference in [
+    "[1] A. S. Tanenbaum and A. S. Woodhull, Operating Systems: Design and Implementation, 3rd ed. Upper Saddle River, NJ: Pearson Prentice Hall, 2006.",
+    "[2] MINIX 3 Project, MINIX 3.3.0 source tree and official documentation, Vrije Universiteit Amsterdam, release 3.3.0. The submitted source baseline is preserved under tag baseline-v3.3.0.",
+    "[3] A. Silberschatz, P. B. Galvin, and G. Gagne, Operating System Concepts, 10th ed. Hoboken, NJ: Wiley, 2018.",
+    "[4] A. S. Tanenbaum and H. Bos, Modern Operating Systems, 4th ed. Boston, MA: Pearson, 2015.",
+    "[5] L. A. Belady, A study of replacement algorithms for a virtual-storage computer, IBM Systems Journal, vol. 5, no. 2, pp. 78-101, 1966.",
+]:
+    para(doc, reference)
+
 doc.core_properties.title = "CSE335 MINIX 3.3.0 Implementation and Native Test Report"
-doc.core_properties.author = "Rodina and project team"
+doc.core_properties.author = (
+    "Jana Ahmed Saieed; Mohamed Ehab Abdelbary Ibrahem; "
+    "Abdelrahman Ashour Hassan; Mostafa Hamdy Mohamed Elzoghby"
+)
 doc.save(OUT)
 print(f"Created {OUT}")

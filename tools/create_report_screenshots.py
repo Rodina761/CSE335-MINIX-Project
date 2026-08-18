@@ -26,13 +26,11 @@ def draw_panel(lines, destination, title, subtitle):
     height = 125 + line_height * len(lines) + 45
     image = Image.new("RGB", (width, height), "#0d1117")
     draw = ImageDraw.Draw(image)
-    draw.rounded_rectangle((0, 0, width - 1, height - 1), radius=20, outline="#30363d", width=3)
-    draw.rectangle((0, 0, width, 82), fill="#161b22")
-    draw.ellipse((25, 29, 43, 47), fill="#ff5f56")
-    draw.ellipse((54, 29, 72, 47), fill="#ffbd2e")
-    draw.ellipse((83, 29, 101, 47), fill="#27c93f")
-    draw.text((130, 17), title, font=title_font, fill="#f0f6fc")
-    draw.text((130, 51), subtitle, font=small_font, fill="#8b949e")
+    draw.rectangle((0, 0, width - 1, height - 1), outline="#30363d", width=3)
+    draw.rectangle((0, 0, width, 82), fill="#181818")
+    draw.rectangle((0, 0, 8, 82), fill="#007acc")
+    draw.text((28, 17), title, font=title_font, fill="#f0f6fc")
+    draw.text((28, 51), subtitle, font=small_font, fill="#8b949e")
     y = 102
     for line in lines:
         number, _, code = line.partition("  ")
