@@ -29,6 +29,7 @@ SUBDIR=	add_route arp at backup btrace \
 	telnetd term termcap tget time \
 	truncate udpstat umount \
 	update version vol \
+	vmexperiment \
 	writeisofs fetch \
 	zdump zmodem pkgin_cd pkgin_all pkgin_sets \
 	worldstone updateboot update_bootcfg \

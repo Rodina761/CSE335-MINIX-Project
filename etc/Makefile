@@ -94,6 +94,7 @@ UTMPGRP= utmp
 .if defined(__MINIX)
 BIN1+=	boot.cfg.default \
 	man.conf \
+	paging.conf \
 	protocols rc rc.cd rc.subr \
 	rc.daemons.dist rs.inet rs.single \
 	services shells syslog.conf \
