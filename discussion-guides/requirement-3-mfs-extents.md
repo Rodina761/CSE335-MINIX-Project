@@ -7,6 +7,36 @@ user-defined extent size, configure it from a file or service option, compare
 performance as extent blocks change, and understand how MINIX creates, reads,
 writes, and removes files and directories.
 
+## What changed from stock MINIX
+
+Stock MFS begins bitmap allocation near a preferred zone but does not first
+require a user-selected free-run length. The project adds a read-only run scan,
+an exact first-bit origin, a bounded service option, counters, and a native I/O
+benchmark. The inode format, direct/indirect zone references, and freeing logic
+remain unchanged.
+
+## End-to-end execution flow
+
+```text
+mount option mfs_extent_size=N       /etc/extent.conf
+              |                              |
+              v                              v
+MFS main.c reads placement policy    benchmark parses I/O parameters
+              |                              |
+              v                              v
+alloc_zone() scans for a free run    create directory and data.bin
+              |                              |
+              v                              v
+alloc_bit() marks each assigned zone write -> fsync -> read -> verify
+              |                              |
+              +--------------+---------------+
+                             v
+               CSV timings/errors + MFS counters
+```
+
+There are two controls because placement belongs to the MFS server, while file
+size, chunking, repetitions, and output belong to the benchmark process.
+
 ## 30-second explanation
 
 MFS manages free inodes and data zones with bitmaps. The project modifies the
@@ -291,6 +321,70 @@ Some short operations measured zero microseconds because the MINIX 3.3 timer is
 coarse. Do not interpret those zeros as infinite performance. Correct data and
 allocator counters are stronger evidence than small throughput differences in
 this run.
+
+## How these results were produced
+
+The native run used a disposable 64 MiB MFS image attached through `/dev/vnd0`.
+`EXTENT_DEVICE=/dev/vnd0` caused `run_extent_matrix.sh` to perform this sequence
+for sizes 1, 2, 4, 8, 16, and 32:
+
+1. Mount the image with `mfs_extent_size` equal to the current size.
+2. Generate a matching benchmark configuration.
+3. Write a 2 MiB file (`512 × 4096` bytes) three times.
+4. Read back and verify every byte.
+5. Unlink the file and remove its directory.
+6. Unmount so MFS prints search, hit, and fallback counters.
+7. Append the three CSV rows to the final matrix.
+
+This gives `6 sizes × 3 repetitions = 18` data rows. Sizes above one show six
+MFS searches because every iteration performs a first-zone allocation for its
+new subdirectory and another for its data file. All six searches found a run,
+so hits are six and fallbacks are zero.
+
+The `extent_blocks=1` case is the compatibility baseline. It bypasses the new
+run search, which is why its counters remain zero.
+
+### Interpreting performance responsibly
+
+The timer is too coarse for strong conclusions from very short individual
+operations. The defensible conclusions are that the real MFS path accepted the
+requested preferences, the preferred runs were found, all file operations
+completed, and data verification reported zero errors. A stronger throughput
+study would enlarge files, repeat runs, reset the image state, and report
+medians and ranges.
+
+## Reproduce from clean source
+
+```sh
+cd /usr/src/minix/fs/mfs
+make clean && make && make install
+
+cd /usr/src/minix/commands/extentexperiment
+make clean && make && make install
+cp /usr/src/etc/extent.conf /etc/extent.conf
+
+cd tests && sh test_known.sh
+
+EXTENT_DEVICE=/dev/vnd0 \
+EXTENT_MOUNT_POINT=/mnt/extenttest \
+run_extent_matrix.sh /root/extent-matrix.csv
+
+wc -l /root/extent-matrix.csv
+```
+
+The expected size is 19 lines: one header plus 18 data rows. Verify `/dev/vnd0`
+before running the matrix; never guess a device name.
+
+## Troubleshooting
+
+- Mount fails: confirm the image contains MFS and is not already mounted.
+- Counters always show size 1: remount with the option and confirm the new MFS
+  binary was installed.
+- CSV writes under `/tmp`: set the benchmark directory under the scratch mount
+  when testing real MFS placement.
+- Nonzero `verify_errors`: treat it as a correctness failure and stop analysis.
+- Zero-microsecond timings: enlarge the workload; do not divide them into a
+  claim of infinite throughput.
 
 ## Demo
 

@@ -1,5 +1,8 @@
 # Demo discussion preparation
 
+Read the [complete project manual](PROJECT_MANUAL.md) first. This page is the
+short assignment sheet for the team.
+
 Start with the [shared demo checklist](discussion-guides/README.md), then each
 team member should study the guide assigned to them:
 

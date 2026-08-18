@@ -7,6 +7,38 @@ levels, and address format. Implement FIFO and LRU replacement, collect page
 faults, empty frames, and related metrics while page size and hierarchy depth
 change, and analyze the results.
 
+## What changed from stock MINIX
+
+Stock 32-bit MINIX uses architecture-defined paging and cannot accept arbitrary
+hardware page geometry from a text file. The project therefore adds a native
+command that constructs the requested hierarchy in software and compares FIFO
+and LRU over controlled traces. This is separate from the production VM server
+and preserves the real system's safety.
+
+## End-to-end execution flow
+
+```text
+/etc/paging.conf
+        |
+        v
+config.c validates page size, levels, index bits, frames, and trace
+        |
+        v
+simulator.c generates one deterministic byte-address trace
+        |
+        v
+page_lookup() walks/creates sparse hierarchy paths
+        |
+        v
+access_page() records hit or fault and select_frame() applies FIFO/LRU
+        |
+        v
+vmexperiment.c writes policy and hierarchy metrics to CSV
+```
+
+FIFO and LRU receive the same address trace. Without this control, a difference
+in fault counts could come from different input rather than replacement policy.
+
 ## 30-second explanation
 
 `vmexperiment` is compiled and run natively in MINIX. It validates a configurable
@@ -262,6 +294,61 @@ better: they may increase internal fragmentation and transfer unused data.
 
 Changing levels primarily changes hierarchy depth and metadata, not policy
 faults, when the page size, frames, and trace are identical.
+
+## How these results were produced
+
+`run_vmexperiments.sh` fixes a 10,000-reference locality trace, 1 MiB byte
+working set, 128 KiB hot region, 64-byte stride, and seed 335. It varies:
+
+- frames: 16, 32, and 64;
+- page size: 1,024, 2,048, 4,096, and 8,192 bytes;
+- hierarchy depth: one, two, and three levels; and
+- replacement policy: FIFO and LRU.
+
+For every page size, the script generates valid level-bit splits. For example,
+4 KiB pages have a 12-bit offset and 20 hierarchy bits, represented as `20`,
+`10,10`, or `7,7,6`. The matrix therefore contains
+`3 × 4 × 3 × 2 = 72` data rows.
+
+The result table in this manual selects the two-level, 64-frame rows. Faults
+fall with larger pages because the byte workload is fixed; each resident page
+covers more bytes. LRU beats FIFO on these locality rows because hot-page hits
+refresh `last_access`, while FIFO never changes `loaded_at` on a hit.
+
+### Why hierarchy depth did not change those fault counts
+
+All valid level splits map the same byte address to the same virtual page. They
+change how the lookup path is divided and how much sparse metadata is allocated,
+but the final page identity and replacement trace remain the same.
+
+## Reproduce from a clean command directory
+
+```sh
+cd /usr/src/minix/commands/vmexperiment
+make clean && make && make install
+cp /usr/src/etc/paging.conf /etc/paging.conf
+
+cd tests && sh test_known.sh
+run_vmexperiments.sh /root/paging-matrix.csv
+wc -l /root/paging-matrix.csv
+```
+
+The expected size is 73 lines: one header plus 72 data rows.
+
+The matrix script waits until a complete three-line single-case CSV exists. On
+this particular MINIX image, libc teardown may spin after the file is closed, so
+the script terminates only that completed process and then consumes the durable
+CSV. A case is rejected if the complete file does not appear before timeout.
+
+## Troubleshooting
+
+- Geometry error: recalculate `log2(page_size)` and ensure level bits plus the
+  offset equal `address_bits`.
+- Missing CSV: check `/tmp/vmexperiment-matrix.log` for the case error.
+- Different FIFO/LRU inputs: keep seed and trace parameters identical and use
+  `algorithm=BOTH`.
+- Unexpected `NA` fields: real VM telemetry is intentionally not linked on this
+  image; simulated metrics remain valid and explicitly labelled.
 
 ## Known-answer test
 

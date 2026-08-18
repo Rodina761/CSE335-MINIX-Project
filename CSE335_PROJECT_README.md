@@ -159,6 +159,8 @@ design rationale, source walkthroughs, method, results, limitations, and analysi
 
 ## Demo and oral-discussion preparation
 
-Team members should use [`discussion-guides/README.md`](discussion-guides/README.md)
+Start with [`PROJECT_MANUAL.md`](PROJECT_MANUAL.md) for the complete project
+workflow. Team members should then use
+[`discussion-guides/README.md`](discussion-guides/README.md)
 for the shared demonstration order and the requirement-specific viva questions,
 code maps, results, limitations, and claims to avoid.

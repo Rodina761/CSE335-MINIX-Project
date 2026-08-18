@@ -7,6 +7,42 @@ Multi-Level Feedback Queue in MINIX. Parameters must be editable in a
 configuration file. Real processes must execute, and average turnaround and
 waiting times must be measured and compared.
 
+## What changed from stock MINIX
+
+Stock MINIX already schedules processes. The project adds a new native command,
+configuration file, deterministic test, and matrix runner for controlled policy
+comparison. It does not delete or replace stock scheduling code. The added
+dispatcher uses real children but owns a logical policy clock, allowing all
+four algorithms to see the same arrivals and bursts.
+
+## End-to-end execution flow
+
+```text
+/etc/scheduler.conf
+        |
+        v
+config.c parses algorithms, quanta, work scale, and process rows
+        |
+        v
+schedexperiment.c starts one independent schedule_run() per policy
+        |
+        v
+scheduler.c forks workers and chooses the next ready job
+        |
+        v
+parent sends run_ms -> child performs CPU work -> child acknowledges
+        |
+        v
+parent updates logical time, remaining burst, queue, and completion
+        |
+        v
+metrics are calculated and written to CSV
+```
+
+Running policies independently is important: each algorithm begins from the
+same original workload rather than inheriting completion state from the policy
+before it.
+
 ## 30-second explanation
 
 `schedexperiment` runs inside MINIX and creates one real child process for every
@@ -289,6 +325,65 @@ Interpretation: SJF achieved the lowest average waiting and turnaround on this
 workload. MLFQ gave the fastest initial response but needed the most dispatches.
 The makespan is always 260 ms because all policies eventually execute the same
 total burst and there is no final idle gap.
+
+## How these results were produced
+
+The known configuration defines five jobs with total burst
+`80 + 40 + 60 + 30 + 50 = 260 ms`. RR uses a 20 ms quantum. MLFQ uses 10, 20,
+and 40 ms queues. `test_known.sh` runs the command, reads the resulting CSV with
+`awk`, and rejects the run unless each algorithm has the expected average
+turnaround and waiting values.
+
+The full matrix is produced by `run_schedexperiments.sh`:
+
+1. Loop through base quanta 5, 10, 20, and 40 ms.
+2. Generate a temporary configuration with the same five jobs.
+3. Set MLFQ quanta to `q`, `2q`, and `4q`.
+4. Run all four policies.
+5. Prefix every CSV row with the current base quantum.
+6. Append the rows into one matrix.
+
+There are `4 quanta × 4 algorithms × 5 processes = 80` data rows. SJF and
+priority do not use the quantum, so their logical results act as controls and
+should remain unchanged. RR and MLFQ dispatch behavior changes with quantum.
+
+### One result traced by hand
+
+For any job, take `arrival_ms`, `start_ms`, `completion_ms`, and `burst_ms` from
+its CSV row. Example calculation:
+
+```text
+turnaround = completion_ms - arrival_ms
+waiting    = turnaround - burst_ms
+response   = start_ms - arrival_ms
+```
+
+The reported algorithm average is the sum of the five per-job values divided by
+five. This is exactly what `scheduler.c:392-408` implements.
+
+## Reproduce from a clean command directory
+
+```sh
+cd /usr/src/minix/commands/schedexperiment
+make clean && make && make install
+cp /usr/src/etc/scheduler.conf /etc/scheduler.conf
+
+cd tests && sh test_known.sh
+run_schedexperiments.sh /root/scheduling-matrix.csv
+wc -l /root/scheduling-matrix.csv
+```
+
+The final `wc` should report 81 lines: one header plus 80 data rows.
+
+## Troubleshooting
+
+- `schedexperiment: not found`: run `make install` or use the built binary path.
+- Configuration error: check that every process has name, arrival, burst, and
+  priority and that all quanta are positive.
+- Different wall time: expected under VM load; logical results should remain
+  identical.
+- Averages fail: inspect the first failing algorithm in the known-test output
+  before running the full matrix.
 
 ## Demo
 

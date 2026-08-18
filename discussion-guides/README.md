@@ -1,5 +1,8 @@
 # CSE335 demo and discussion guide
 
+For the full implementation and result-production workflow, begin with the
+[project manual](../PROJECT_MANUAL.md).
+
 Use this folder to divide preparation between the team. Each owner should read
 the guide for their requirement, inspect the named source files, and practice
 the short explanation and demo before the discussion.
