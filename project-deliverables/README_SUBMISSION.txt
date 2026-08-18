@@ -20,9 +20,9 @@ copies. They are intentionally not included in the submission ZIP.
 Files in this folder
 --------------------
 1. CSE335_MINIX_Project_Report.docx
-   Detailed evidence-led research report; 9,137 words; visually checked at
-   30 pages. It includes the theory, implementation, code maps, test cases,
-   results, analysis, demonstration manuals, in-text citations, and references.
+   Detailed evidence-led research report; 8,127 words; visually checked at
+   28 pages. It includes the theory, implementation, code maps, test cases,
+   results, analysis, reproducibility procedures, in-text citations, and references.
 2. CSE335_MINIX_Project_Report_Final.pdf
    Cleaned rendered reference copy of the report.
 3. CSE335_MINIX_Project_Presentation.pptx

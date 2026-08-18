@@ -30,7 +30,7 @@ tested the current source rather than only an older installed binary.
 | Six project shell scripts parse cleanly | PASS |
 | Report-generation Python syntax | PASS |
 | DOCX package and 8,000-word minimum | PASS |
-| PDF package, 30-page count, and marker scan | PASS |
+| PDF package, 28-page count, and marker scan | PASS |
 | PPTX package, 12-slide count, and requirement coverage | PASS |
 | Git whitespace validation | PASS |
 
@@ -68,7 +68,7 @@ requires two CSV rows and a total `verify_errors` value of zero.
 
 The six project test/matrix shell scripts pass `bash -n`. The report tools pass
 Python syntax parsing, `git diff --check` reports no whitespace errors, the DOCX
-is a valid Office package above 8,000 words, the cleaned PDF contains 30 pages,
+is a valid Office package above 8,000 words, the cleaned PDF contains 28 pages,
 and the 12-slide PowerPoint covers all three requirements.
 
 ## Commands used in MINIX

@@ -78,7 +78,7 @@ function metric(slide, x, y, w, label, value, sub) {
   text(s, "Scheduling, paging,\nand extent-aware storage", 48, 182, 1040, 184, 64, { bold: true, name: "cover-title" });
   box(s, 48, 402, 470, 8, BLUE);
   text(s, "Three reproducible experiments inside MINIX 3.3.0", 48, 438, 800, 44, 27, { color: MUTED });
-  text(s, "Rodina and project team", 48, 608, 500, 30, 18, { bold: true });
+  text(s, "Jana · Mohamed · Abdelrahman · Mostafa", 48, 608, 700, 30, 18, { bold: true });
   text(s, "Source · tests · report · presentation", 48, 642, 700, 24, 15, { color: MUTED });
 }
 
@@ -272,14 +272,14 @@ function metric(slide, x, y, w, label, value, sub) {
 // 11 — status.
 {
   const s = deck.slides.add();
-  title(s, "Native verification is complete", "Submission status", 11);
+  title(s, "Native verification results", "Verification summary", 11);
   metric(s, 48, 184, 350, "Source", "Complete", "three requirements committed");
-  metric(s, 465, 184, 350, "Report", "1,256", "words · 7 rendered pages");
+  metric(s, 465, 184, 350, "Report", "8,127", "words · 28 rendered pages");
   metric(s, 882, 184, 350, "VM evidence", "Complete", "3 tests · 170 data rows");
   text(s, "Archived native evidence", 48, 424, 580, 34, 23, { bold: true });
   text(s, "1  scheduling matrix · 80 rows\n2  paging matrix · 72 rows\n3  extent matrix · 18 rows · zero errors\n4  MFS preferred-run hits · zero fallbacks", 48, 476, 650, 142, 21);
   box(s, 778, 428, 454, 154, PALE);
-  text(s, "VALIDATED PLATFORM", 804, 450, 390, 24, 14, { bold: true, color: MUTED });
+  text(s, "TEST PLATFORM", 804, 450, 390, 24, 14, { bold: true, color: MUTED });
   text(s, "MINIX 3.3.0\ni386 · VirtualBox", 804, 492, 390, 66, 27, { bold: true });
   footer(s, "Raw CSV, checksums, test output, and MFS logs are included.");
 }
@@ -292,7 +292,7 @@ function metric(slide, x, y, w, label, value, sub) {
   text(s, "Policy only means something\nwhen workload, mechanism,\nand evidence stay aligned.", 48, 168, 1040, 238, 58, { bold: true });
   box(s, 48, 446, 680, 8, BLUE);
   text(s, "Real processes. Configurable page structures. Real MFS allocation. Reproducible CSV.", 48, 488, 1040, 68, 24, { color: MUTED });
-  text(s, "Ready to submit: final commit, source archive, report, slides, and raw evidence.", 48, 622, 1050, 30, 19, { bold: true });
+  text(s, "Source, report, presentation, configurations, tests, and evidence are archived together.", 48, 622, 1120, 30, 19, { bold: true });
 }
 
 async function writeBlob(url, blob) {
