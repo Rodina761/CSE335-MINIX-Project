@@ -1,0 +1,29 @@
+Tue Aug 18 17:39:47 GMT 2026
+Minix 10.0.2.15 3.3.0 Minix 3.3.0 (GENERIC) i386
+BUILD_CHECKS
+DETERMINISTIC_TESTS
+PASS: known scheduling workload
+PASS: known FIFO/LRU reference string
+PASS: extent file/directory I/O and data verification
+MATRIX_LINES
+      81 /root/scheduling-matrix.csv
+      73 /root/paging-matrix.csv
+      19 /root/extent-matrix.csv
+     173 total
+MATRIX_CKSUM
+3987883731 5385 /root/scheduling-matrix.csv
+863209646 6398 /root/paging-matrix.csv
+2664218402 1229 /root/extent-matrix.csv
+MFS_EXTENT_LOGS
+Aug 18 17:39:21 10 kernel: MFS: extent allocation preference is 1 zone(s)
+Aug 18 17:39:21 10 kernel: MFS extent stats: size=1 searches=0 hits=0 fallbacks=0
+Aug 18 17:39:21 10 kernel: MFS: extent allocation preference is 2 zone(s)
+Aug 18 17:39:21 10 kernel: MFS extent stats: size=2 searches=6 hits=6 fallbacks=0
+Aug 18 17:39:21 10 kernel: MFS: extent allocation preference is 4 zone(s)
+Aug 18 17:39:21 10 kernel: MFS extent stats: size=4 searches=6 hits=6 fallbacks=0
+Aug 18 17:39:21 10 kernel: MFS: extent allocation preference is 8 zone(s)
+Aug 18 17:39:21 10 kernel: MFS extent stats: size=8 searches=6 hits=6 fallbacks=0
+Aug 18 17:39:22 10 kernel: MFS: extent allocation preference is 16 zone(s)
+Aug 18 17:39:22 10 kernel: MFS extent stats: size=16 searches=6 hits=6 fallbacks=0
+Aug 18 17:39:22 10 kernel: MFS: extent allocation preference is 32 zone(s)
+Aug 18 17:39:22 10 kernel: MFS extent stats: size=32 searches=6 hits=6 fallbacks=0
