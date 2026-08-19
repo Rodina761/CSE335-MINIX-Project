@@ -1,0 +1,3103 @@
+diff --git a/etc/Makefile b/etc/Makefile
+index 8f166206..b0fad9c7 100644
+--- a/etc/Makefile
++++ b/etc/Makefile
+@@ -93,8 +93,10 @@ BINGRP= operator
+ UTMPGRP= utmp
+ .if defined(__MINIX)
+ BIN1+=	boot.cfg.default \
++	extent.conf \
+ 	man.conf \
+-	protocols rc rc.cd rc.subr \
++	paging.conf \
++	protocols rc rc.cd rc.subr scheduler.conf \
+ 	rc.daemons.dist rs.inet rs.single \
+ 	services shells syslog.conf \
+ 	termcap utmp gettytab rc.shutdown
+diff --git a/etc/extent.conf b/etc/extent.conf
+new file mode 100644
+index 00000000..efa02ea5
+--- /dev/null
++++ b/etc/extent.conf
+@@ -0,0 +1,8 @@
++# CSE335 Requirement 3 - extent allocation and I/O experiment
++
++extent_blocks=8
++block_size=4096
++file_blocks=512
++iterations=3
++directory=/tmp/extentexperiment
++csv_output=/tmp/extentexperiment.csv
+diff --git a/etc/paging.conf b/etc/paging.conf
+new file mode 100644
+index 00000000..71743665
+--- /dev/null
++++ b/etc/paging.conf
+@@ -0,0 +1,24 @@
++# CSE335 Requirement 2 - configurable paging experiment
++#
++# The simulated address must be split exactly into hierarchy bits and offset:
++# sum(level_bits) + log2(page_size) = address_bits.
++
++address_bits=32
++page_size=4096
++levels=2
++level_bits=10,10
++
++frames=64
++algorithm=BOTH
++
++# trace_mode may be sequential, locality, random, or file.
++trace_mode=locality
++references=10000
++working_set_bytes=1048576
++hot_bytes=131072
++access_stride=64
++seed=335
++
++# Required only when trace_mode=file. Addresses may be decimal or hexadecimal.
++trace_file=/usr/tests/paging.trace
++csv_output=/tmp/vmexperiment.csv
+diff --git a/etc/scheduler.conf b/etc/scheduler.conf
+new file mode 100644
+index 00000000..e69d3f8d
+--- /dev/null
++++ b/etc/scheduler.conf
+@@ -0,0 +1,16 @@
++# CSE335 Requirement 1 - real-process scheduling experiment
++
++algorithm=ALL
++quantum_ms=20
++mlfq_quanta_ms=10,20,40
++
++# Work performed by each child for one logical burst millisecond.
++work_scale=20000
++csv_output=/tmp/schedexperiment.csv
++
++# process=name,arrival_ms,burst_ms,priority (smaller priority is higher)
++process=P1,0,80,3
++process=P2,10,40,4
++process=P3,20,60,0
++process=P4,35,30,2
++process=P5,50,50,1
+diff --git a/minix/commands/Makefile b/minix/commands/Makefile
+index 9882d297..3529d8c1 100644
+--- a/minix/commands/Makefile
++++ b/minix/commands/Makefile
+@@ -9,6 +9,7 @@ SUBDIR=	add_route arp at backup btrace \
+ 	dd decomp16 DESCRIBE devmand devsize dhcpd \
+ 	dhrystone diff diskctl \
+ 	eject fbdctl \
++	extentexperiment \
+ 	find fix format fsck.mfs \
+ 	gcov-pull grep host \
+ 	hostaddr ifconfig ifdef \
+@@ -23,12 +24,14 @@ SUBDIR=	add_route arp at backup btrace \
+ 	ramdisk rarpd rawspeed rcp readclock \
+ 	remsync rget rlogin \
+ 	rotate rsh rshd service setup \
++	schedexperiment \
+ 	slip spell sprofalyze sprofdiff srccrc \
+ 	svclog svrctl swifi synctree sysenv \
+ 	syslogd tcpd tcpdp tcpstat telnet \
+ 	telnetd term termcap tget time \
+ 	truncate udpstat umount \
+ 	update version vol \
++	vmexperiment \
+ 	writeisofs fetch \
+ 	zdump zmodem pkgin_cd pkgin_all pkgin_sets \
+ 	worldstone updateboot update_bootcfg \
+diff --git a/minix/commands/extentexperiment/Makefile b/minix/commands/extentexperiment/Makefile
+new file mode 100644
+index 00000000..a5f9c2de
+--- /dev/null
++++ b/minix/commands/extentexperiment/Makefile
+@@ -0,0 +1,7 @@
++PROG=	extentexperiment
++SRCS=	extentexperiment.c config.c
++SCRIPTS=	run_extent_matrix.sh
++SCRIPTSDIR=	/usr/bin
++MAN=
++
++.include <bsd.prog.mk>
+diff --git a/minix/commands/extentexperiment/config.c b/minix/commands/extentexperiment/config.c
+new file mode 100644
+index 00000000..f099bac8
+--- /dev/null
++++ b/minix/commands/extentexperiment/config.c
+@@ -0,0 +1,141 @@
++#include <ctype.h>
++#include <errno.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++
++#include "extentexperiment.h"
++
++static char *trim(char *text)
++{
++	char *end;
++
++	while (isspace((unsigned char)*text))
++		text++;
++	end = text + strlen(text);
++	while (end > text && isspace((unsigned char)end[-1]))
++		*--end = '\0';
++	return text;
++}
++
++static int parse_uint(const char *text, unsigned int *value)
++{
++	char *end;
++	unsigned long parsed;
++
++	errno = 0;
++	parsed = strtoul(text, &end, 0);
++	if (errno != 0 || end == text || *trim(end) != '\0' ||
++	    parsed == 0 || parsed > 0xffffffffUL)
++		return -1;
++	*value = (unsigned int)parsed;
++	return 0;
++}
++
++void extent_config_defaults(struct extent_config *cfg)
++{
++	memset(cfg, 0, sizeof(*cfg));
++	cfg->extent_blocks = 8;
++	cfg->block_size = 4096;
++	cfg->file_blocks = 512;
++	cfg->iterations = 3;
++	strcpy(cfg->directory, "/tmp/extentexperiment");
++	strcpy(cfg->csv_output, "/tmp/extentexperiment.csv");
++}
++
++static int set_value(struct extent_config *cfg, const char *key,
++	const char *value, char *error, size_t error_size)
++{
++	if (strcmp(key, "extent_blocks") == 0)
++		return parse_uint(value, &cfg->extent_blocks);
++	if (strcmp(key, "block_size") == 0)
++		return parse_uint(value, &cfg->block_size);
++	if (strcmp(key, "file_blocks") == 0)
++		return parse_uint(value, &cfg->file_blocks);
++	if (strcmp(key, "iterations") == 0)
++		return parse_uint(value, &cfg->iterations);
++	if (strcmp(key, "directory") == 0) {
++		if (strlen(value) >= sizeof(cfg->directory))
++			return -1;
++		strcpy(cfg->directory, value);
++		return 0;
++	}
++	if (strcmp(key, "csv_output") == 0) {
++		if (strlen(value) >= sizeof(cfg->csv_output))
++			return -1;
++		strcpy(cfg->csv_output, value);
++		return 0;
++	}
++	snprintf(error, error_size, "unknown configuration key: %s", key);
++	return -2;
++}
++
++int extent_config_load(const char *path, struct extent_config *cfg,
++	char *error, size_t error_size)
++{
++	FILE *file;
++	char line[1024];
++	unsigned long line_number;
++
++	file = fopen(path, "r");
++	if (file == NULL) {
++		snprintf(error, error_size, "cannot open %s: %s", path,
++		    strerror(errno));
++		return -1;
++	}
++	line_number = 0;
++	while (fgets(line, sizeof(line), file) != NULL) {
++		char *key;
++		char *value;
++		char *separator;
++		char *comment;
++		int status;
++
++		line_number++;
++		comment = strchr(line, '#');
++		if (comment != NULL)
++			*comment = '\0';
++		key = trim(line);
++		if (*key == '\0')
++			continue;
++		separator = strchr(key, '=');
++		if (separator == NULL) {
++			snprintf(error, error_size, "%s:%lu: expected key=value",
++			    path, line_number);
++			fclose(file);
++			return -1;
++		}
++		*separator = '\0';
++		value = trim(separator + 1);
++		key = trim(key);
++		status = set_value(cfg, key, value, error, error_size);
++		if (status != 0) {
++			if (status == -1)
++				snprintf(error, error_size,
++				    "%s:%lu: invalid value for %s", path,
++				    line_number, key);
++			fclose(file);
++			return -1;
++		}
++	}
++	fclose(file);
++	if (cfg->block_size < 512 ||
++	    (cfg->block_size & (cfg->block_size - 1)) != 0) {
++		snprintf(error, error_size,
++		    "block_size must be a power of two of at least 512 bytes");
++		return -1;
++	}
++	if (cfg->extent_blocks > cfg->file_blocks) {
++		snprintf(error, error_size,
++		    "extent_blocks cannot exceed file_blocks");
++		return -1;
++	}
++	if (cfg->block_size > 1024 * 1024 ||
++	    cfg->extent_blocks > (64 * 1024 * 1024U) / cfg->block_size ||
++	    cfg->file_blocks > (512 * 1024 * 1024U) / cfg->block_size) {
++		snprintf(error, error_size,
++		    "buffer or file size exceeds the experiment safety limit");
++		return -1;
++	}
++	return 0;
++}
+diff --git a/minix/commands/extentexperiment/extentexperiment.c b/minix/commands/extentexperiment/extentexperiment.c
+new file mode 100644
+index 00000000..e8d8987f
+--- /dev/null
++++ b/minix/commands/extentexperiment/extentexperiment.c
+@@ -0,0 +1,293 @@
++#include <errno.h>
++#include <fcntl.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <sys/stat.h>
++#include <sys/time.h>
++#include <sys/types.h>
++#include <unistd.h>
++
++#include "extentexperiment.h"
++
++static unsigned long elapsed_us(const struct timeval *start,
++	const struct timeval *end)
++{
++	long seconds;
++	long microseconds;
++
++	seconds = end->tv_sec - start->tv_sec;
++	microseconds = end->tv_usec - start->tv_usec;
++	return (unsigned long)(seconds * 1000000L + microseconds);
++}
++
++static int write_full(int fd, const void *buffer, size_t size)
++{
++	const char *bytes;
++	size_t done;
++	ssize_t count;
++
++	bytes = buffer;
++	done = 0;
++	while (done < size) {
++		count = write(fd, bytes + done, size - done);
++		if (count < 0 && errno == EINTR)
++			continue;
++		if (count <= 0)
++			return -1;
++		done += (size_t)count;
++	}
++	return 0;
++}
++
++static int read_full(int fd, void *buffer, size_t size)
++{
++	char *bytes;
++	size_t done;
++	ssize_t count;
++
++	bytes = buffer;
++	done = 0;
++	while (done < size) {
++		count = read(fd, bytes + done, size - done);
++		if (count < 0 && errno == EINTR)
++			continue;
++		if (count <= 0)
++			return -1;
++		done += (size_t)count;
++	}
++	return 0;
++}
++
++static void fill_pattern(unsigned char *buffer, size_t size,
++	unsigned long long offset, unsigned int iteration)
++{
++	size_t index;
++
++	for (index = 0; index < size; index++)
++		buffer[index] = (unsigned char)((offset + index + iteration) & 0xff);
++}
++
++static unsigned int verify_pattern(const unsigned char *buffer, size_t size,
++	unsigned long long offset, unsigned int iteration)
++{
++	size_t index;
++	unsigned int errors;
++
++	errors = 0;
++	for (index = 0; index < size; index++) {
++		if (buffer[index] !=
++		    (unsigned char)((offset + index + iteration) & 0xff))
++			errors++;
++	}
++	return errors;
++}
++
++static double throughput_mib(unsigned long long bytes, unsigned long usec)
++{
++	if (usec == 0)
++		return 0.0;
++	return ((double)bytes / (1024.0 * 1024.0)) /
++	    ((double)usec / 1000000.0);
++}
++
++static int run_iteration(const struct extent_config *cfg, unsigned int iteration,
++	FILE *csv, char *error, size_t error_size)
++{
++	char subdir[EXTENT_PATH_MAX];
++	char filepath[EXTENT_PATH_MAX];
++	unsigned char *buffer;
++	size_t chunk_size;
++	unsigned long long total_bytes;
++	unsigned long long offset;
++	struct timeval create_start, create_end;
++	struct timeval write_start, write_end;
++	struct timeval read_start, read_end;
++	struct timeval remove_start, remove_end;
++	struct stat info;
++	unsigned long create_us, write_us, read_us, remove_us;
++	unsigned int verify_errors;
++	int fd;
++
++	if (snprintf(subdir, sizeof(subdir), "%s/run-%u", cfg->directory,
++	    iteration) >= (int)sizeof(subdir) ||
++	    snprintf(filepath, sizeof(filepath), "%s/data.bin", subdir) >=
++	    (int)sizeof(filepath)) {
++		snprintf(error, error_size, "benchmark path is too long");
++		return -1;
++	}
++	chunk_size = (size_t)cfg->extent_blocks * cfg->block_size;
++	total_bytes = (unsigned long long)cfg->file_blocks * cfg->block_size;
++	buffer = malloc(chunk_size);
++	if (buffer == NULL) {
++		snprintf(error, error_size, "cannot allocate extent buffer");
++		return -1;
++	}
++	gettimeofday(&create_start, NULL);
++	if (mkdir(subdir, 0755) != 0) {
++		snprintf(error, error_size, "mkdir %s failed: %s", subdir,
++		    strerror(errno));
++		free(buffer);
++		return -1;
++	}
++	fd = open(filepath, O_CREAT | O_TRUNC | O_RDWR, 0644);
++	gettimeofday(&create_end, NULL);
++	if (fd < 0) {
++		snprintf(error, error_size, "open %s failed: %s", filepath,
++		    strerror(errno));
++		rmdir(subdir);
++		free(buffer);
++		return -1;
++	}
++	gettimeofday(&write_start, NULL);
++	for (offset = 0; offset < total_bytes; offset += chunk_size) {
++		size_t amount;
++
++		amount = chunk_size;
++		if ((unsigned long long)amount > total_bytes - offset)
++			amount = (size_t)(total_bytes - offset);
++		fill_pattern(buffer, amount, offset, iteration);
++		if (write_full(fd, buffer, amount) != 0) {
++			snprintf(error, error_size, "write failed: %s", strerror(errno));
++			close(fd);
++			unlink(filepath);
++			rmdir(subdir);
++			free(buffer);
++			return -1;
++		}
++	}
++	if (fsync(fd) != 0) {
++		snprintf(error, error_size, "fsync failed: %s", strerror(errno));
++		close(fd);
++		unlink(filepath);
++		rmdir(subdir);
++		free(buffer);
++		return -1;
++	}
++	gettimeofday(&write_end, NULL);
++	if (fstat(fd, &info) != 0 || lseek(fd, 0, SEEK_SET) < 0) {
++		snprintf(error, error_size, "stat/seek failed: %s", strerror(errno));
++		close(fd);
++		unlink(filepath);
++		rmdir(subdir);
++		free(buffer);
++		return -1;
++	}
++	verify_errors = 0;
++	gettimeofday(&read_start, NULL);
++	for (offset = 0; offset < total_bytes; offset += chunk_size) {
++		size_t amount;
++
++		amount = chunk_size;
++		if ((unsigned long long)amount > total_bytes - offset)
++			amount = (size_t)(total_bytes - offset);
++		if (read_full(fd, buffer, amount) != 0) {
++			snprintf(error, error_size, "read failed: %s", strerror(errno));
++			close(fd);
++			unlink(filepath);
++			rmdir(subdir);
++			free(buffer);
++			return -1;
++		}
++		verify_errors += verify_pattern(buffer, amount, offset, iteration);
++	}
++	gettimeofday(&read_end, NULL);
++	close(fd);
++	gettimeofday(&remove_start, NULL);
++	if (unlink(filepath) != 0 || rmdir(subdir) != 0) {
++		snprintf(error, error_size, "file/directory removal failed: %s",
++		    strerror(errno));
++		free(buffer);
++		return -1;
++	}
++	gettimeofday(&remove_end, NULL);
++	free(buffer);
++	create_us = elapsed_us(&create_start, &create_end);
++	write_us = elapsed_us(&write_start, &write_end);
++	read_us = elapsed_us(&read_start, &read_end);
++	remove_us = elapsed_us(&remove_start, &remove_end);
++	fprintf(csv, "%u,%u,%u,%u,%llu,%u,%lld,%lu,%lu,%lu,%lu,",
++	    cfg->extent_blocks, iteration, cfg->block_size, cfg->file_blocks,
++	    total_bytes,
++	    (cfg->file_blocks + cfg->extent_blocks - 1) / cfg->extent_blocks,
++	    (long long)info.st_blocks, create_us, write_us, read_us, remove_us);
++	fprintf(csv, "%.3f,%.3f,%u\n", throughput_mib(total_bytes, write_us),
++	    throughput_mib(total_bytes, read_us), verify_errors);
++	printf("extent=%u run=%u write=%.3f MiB/s read=%.3f MiB/s errors=%u\n",
++	    cfg->extent_blocks, iteration, throughput_mib(total_bytes, write_us),
++	    throughput_mib(total_bytes, read_us), verify_errors);
++	if (verify_errors != 0) {
++		snprintf(error, error_size, "%u data verification errors",
++		    verify_errors);
++		return -1;
++	}
++	return 0;
++}
++
++static void usage(const char *program)
++{
++	fprintf(stderr, "Usage: %s [-c config] [-o csv-output]\n", program);
++}
++
++int main(int argc, char **argv)
++{
++	const char *config_path;
++	const char *output_override;
++	struct extent_config cfg;
++	char error[EXTENT_ERROR_MAX];
++	FILE *csv;
++	unsigned int iteration;
++	int argument;
++
++	config_path = "/etc/extent.conf";
++	output_override = NULL;
++	for (argument = 1; argument < argc; argument++) {
++		if (strcmp(argv[argument], "-c") == 0 && argument + 1 < argc)
++			config_path = argv[++argument];
++		else if (strcmp(argv[argument], "-o") == 0 && argument + 1 < argc)
++			output_override = argv[++argument];
++		else {
++			usage(argv[0]);
++			return 2;
++		}
++	}
++	extent_config_defaults(&cfg);
++	if (extent_config_load(config_path, &cfg, error, sizeof(error)) != 0) {
++		fprintf(stderr, "extentexperiment: %s\n", error);
++		return 1;
++	}
++	if (output_override != NULL) {
++		if (strlen(output_override) >= sizeof(cfg.csv_output)) {
++			fprintf(stderr, "extentexperiment: output path is too long\n");
++			return 1;
++		}
++		strcpy(cfg.csv_output, output_override);
++	}
++	if (mkdir(cfg.directory, 0755) != 0 && errno != EEXIST) {
++		fprintf(stderr, "extentexperiment: mkdir %s failed: %s\n",
++		    cfg.directory, strerror(errno));
++		return 1;
++	}
++	csv = fopen(cfg.csv_output, "w");
++	if (csv == NULL) {
++		fprintf(stderr, "extentexperiment: cannot write %s: %s\n",
++		    cfg.csv_output, strerror(errno));
++		return 1;
++	}
++	fprintf(csv, "extent_blocks,iteration,block_size,file_blocks,bytes,");
++	fprintf(csv, "logical_extents,allocated_512_blocks,create_us,write_us,");
++	fprintf(csv, "read_us,remove_us,write_mib_s,read_mib_s,verify_errors\n");
++	for (iteration = 1; iteration <= cfg.iterations; iteration++) {
++		if (run_iteration(&cfg, iteration, csv, error, sizeof(error)) != 0) {
++			fprintf(stderr, "extentexperiment: %s\n", error);
++			fclose(csv);
++			return 1;
++		}
++	}
++	if (fclose(csv) != 0) {
++		fprintf(stderr, "extentexperiment: failed to close CSV\n");
++		return 1;
++	}
++	printf("CSV results written to %s\n", cfg.csv_output);
++	return 0;
++}
+diff --git a/minix/commands/extentexperiment/extentexperiment.h b/minix/commands/extentexperiment/extentexperiment.h
+new file mode 100644
+index 00000000..22c07056
+--- /dev/null
++++ b/minix/commands/extentexperiment/extentexperiment.h
+@@ -0,0 +1,22 @@
++#ifndef EXTENTEXPERIMENT_H
++#define EXTENTEXPERIMENT_H
++
++#include <stddef.h>
++
++#define EXTENT_PATH_MAX 512
++#define EXTENT_ERROR_MAX 256
++
++struct extent_config {
++	unsigned int extent_blocks;
++	unsigned int block_size;
++	unsigned int file_blocks;
++	unsigned int iterations;
++	char directory[EXTENT_PATH_MAX];
++	char csv_output[EXTENT_PATH_MAX];
++};
++
++void extent_config_defaults(struct extent_config *cfg);
++int extent_config_load(const char *path, struct extent_config *cfg,
++	char *error, size_t error_size);
++
++#endif
+diff --git a/minix/commands/extentexperiment/run_extent_matrix.sh b/minix/commands/extentexperiment/run_extent_matrix.sh
+new file mode 100644
+index 00000000..3b01fd6f
+--- /dev/null
++++ b/minix/commands/extentexperiment/run_extent_matrix.sh
+@@ -0,0 +1,53 @@
++#!/bin/sh
++
++set -e
++
++OUTPUT=${1:-/tmp/extentexperiment-matrix.csv}
++CONFIG=/tmp/extentexperiment-matrix.conf
++SINGLE=/tmp/extentexperiment-single.csv
++DEVICE=${EXTENT_DEVICE:-}
++MOUNT_POINT=${EXTENT_MOUNT_POINT:-/mnt/extenttest}
++mounted=0
++
++cleanup()
++{
++	if [ "$mounted" -eq 1 ]; then
++		umount "$MOUNT_POINT" 2>/dev/null || true
++	fi
++}
++trap cleanup 0 1 2 15
++
++rm -f "$OUTPUT" "$CONFIG" "$SINGLE"
++
++for extent in 1 2 4 8 16 32
++do
++	if [ -n "$DEVICE" ]; then
++		mkdir -p "$MOUNT_POINT"
++		mount -t mfs -o "mfs_extent_size=$extent" "$DEVICE" "$MOUNT_POINT"
++		mounted=1
++		directory="$MOUNT_POINT/extentexperiment"
++	else
++		directory=/tmp/extentexperiment
++	fi
++	{
++		echo "extent_blocks=$extent"
++		echo "block_size=4096"
++		echo "file_blocks=512"
++		echo "iterations=3"
++		echo "directory=$directory"
++		echo "csv_output=$SINGLE"
++	} > "$CONFIG"
++		extentexperiment -c "$CONFIG" >/dev/null
++	if [ -n "$DEVICE" ]; then
++		umount "$MOUNT_POINT"
++		mounted=0
++	fi
++	if [ ! -f "$OUTPUT" ]; then
++		cat "$SINGLE" > "$OUTPUT"
++	else
++		tail -n +2 "$SINGLE" >> "$OUTPUT"
++	fi
++done
++
++rm -f "$CONFIG" "$SINGLE"
++echo "Extent experiment matrix written to $OUTPUT"
+diff --git a/minix/commands/extentexperiment/tests/known.conf b/minix/commands/extentexperiment/tests/known.conf
+new file mode 100644
+index 00000000..75c747d5
+--- /dev/null
++++ b/minix/commands/extentexperiment/tests/known.conf
+@@ -0,0 +1,6 @@
++extent_blocks=4
++block_size=4096
++file_blocks=16
++iterations=2
++directory=/tmp/extentexperiment-test
++csv_output=/tmp/extentexperiment-known.csv
+diff --git a/minix/commands/extentexperiment/tests/test_known.sh b/minix/commands/extentexperiment/tests/test_known.sh
+new file mode 100644
+index 00000000..59190342
+--- /dev/null
++++ b/minix/commands/extentexperiment/tests/test_known.sh
+@@ -0,0 +1,20 @@
++#!/bin/sh
++
++set -e
++
++extentexperiment -c known.conf >/tmp/extentexperiment-known.out
++
++rows=`awk 'END { print NR - 1 }' /tmp/extentexperiment-known.csv`
++errors=`awk -F, 'NR > 1 { total += $14 } END { print total + 0 }' \
++    /tmp/extentexperiment-known.csv`
++
++if [ "$rows" != "2" ]; then
++	echo "FAIL: expected 2 result rows, got $rows" >&2
++	exit 1
++fi
++if [ "$errors" != "0" ]; then
++	echo "FAIL: expected zero verification errors, got $errors" >&2
++	exit 1
++fi
++
++echo "PASS: extent file/directory I/O and data verification"
+diff --git a/minix/commands/schedexperiment/Makefile b/minix/commands/schedexperiment/Makefile
+new file mode 100644
+index 00000000..04d962ee
+--- /dev/null
++++ b/minix/commands/schedexperiment/Makefile
+@@ -0,0 +1,7 @@
++PROG=	schedexperiment
++SRCS=	schedexperiment.c config.c scheduler.c
++SCRIPTS=	run_schedexperiments.sh
++SCRIPTSDIR=	/usr/bin
++MAN=
++
++.include <bsd.prog.mk>
+diff --git a/minix/commands/schedexperiment/config.c b/minix/commands/schedexperiment/config.c
+new file mode 100644
+index 00000000..99431713
+--- /dev/null
++++ b/minix/commands/schedexperiment/config.c
+@@ -0,0 +1,243 @@
++#include <ctype.h>
++#include <errno.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++
++#include "schedexperiment.h"
++
++static char *trim(char *text)
++{
++	char *end;
++
++	while (isspace((unsigned char)*text))
++		text++;
++	end = text + strlen(text);
++	while (end > text && isspace((unsigned char)end[-1]))
++		*--end = '\0';
++	return text;
++}
++
++static int same(const char *left, const char *right)
++{
++	while (*left != '\0' && *right != '\0') {
++		if (tolower((unsigned char)*left) !=
++		    tolower((unsigned char)*right))
++			return 0;
++		left++;
++		right++;
++	}
++	return *left == '\0' && *right == '\0';
++}
++
++static int parse_uint(const char *text, unsigned long *value)
++{
++	char *end;
++	unsigned long parsed;
++
++	errno = 0;
++	parsed = strtoul(text, &end, 0);
++	if (errno != 0 || end == text || *trim(end) != '\0')
++		return -1;
++	*value = parsed;
++	return 0;
++}
++
++static int parse_algorithm(const char *text, enum sched_algorithm *algorithm)
++{
++	if (same(text, "RR"))
++		*algorithm = SCHED_RR;
++	else if (same(text, "SJF"))
++		*algorithm = SCHED_SJF;
++	else if (same(text, "PRIORITY"))
++		*algorithm = SCHED_PRIORITY;
++	else if (same(text, "MLFQ"))
++		*algorithm = SCHED_MLFQ;
++	else if (same(text, "ALL"))
++		*algorithm = SCHED_ALL;
++	else
++		return -1;
++	return 0;
++}
++
++static int parse_mlfq(const char *text, struct sched_config *cfg)
++{
++	char copy[128];
++	char *token;
++	unsigned int count;
++	unsigned long value;
++
++	if (strlen(text) >= sizeof(copy))
++		return -1;
++	strcpy(copy, text);
++	count = 0;
++	for (token = strtok(copy, ","); token != NULL;
++	    token = strtok(NULL, ",")) {
++		if (count >= SCHED_MLFQ_LEVELS ||
++		    parse_uint(trim(token), &value) != 0 || value == 0)
++			return -1;
++		cfg->mlfq_quantum[count++] = (unsigned int)value;
++	}
++	return count == SCHED_MLFQ_LEVELS ? 0 : -1;
++}
++
++static int parse_job(const char *text, struct sched_config *cfg)
++{
++	char copy[256];
++	char *fields[4];
++	char *token;
++	unsigned int count;
++	unsigned long value;
++	struct job_config *job;
++
++	if (cfg->job_count >= SCHED_MAX_JOBS || strlen(text) >= sizeof(copy))
++		return -1;
++	strcpy(copy, text);
++	count = 0;
++	for (token = strtok(copy, ","); token != NULL;
++	    token = strtok(NULL, ",")) {
++		if (count >= 4)
++			return -1;
++		fields[count++] = trim(token);
++	}
++	if (count != 4 || fields[0][0] == '\0' ||
++	    strlen(fields[0]) >= SCHED_NAME_MAX)
++		return -1;
++	job = &cfg->jobs[cfg->job_count];
++	memset(job, 0, sizeof(*job));
++	strcpy(job->name, fields[0]);
++	if (parse_uint(fields[1], &value) != 0)
++		return -1;
++	job->arrival_ms = (unsigned int)value;
++	if (parse_uint(fields[2], &value) != 0 || value == 0)
++		return -1;
++	job->burst_ms = (unsigned int)value;
++	if (parse_uint(fields[3], &value) != 0)
++		return -1;
++	job->priority = (unsigned int)value;
++	cfg->job_count++;
++	return 0;
++}
++
++void sched_config_defaults(struct sched_config *cfg)
++{
++	memset(cfg, 0, sizeof(*cfg));
++	cfg->algorithm = SCHED_ALL;
++	cfg->quantum_ms = 20;
++	cfg->mlfq_quantum[0] = 10;
++	cfg->mlfq_quantum[1] = 20;
++	cfg->mlfq_quantum[2] = 40;
++	cfg->work_scale = 20000;
++	strcpy(cfg->csv_output, "/tmp/schedexperiment.csv");
++}
++
++static int set_value(struct sched_config *cfg, const char *key,
++	const char *value, char *error, size_t error_size)
++{
++	unsigned long number;
++
++	if (same(key, "algorithm")) {
++		if (parse_algorithm(value, &cfg->algorithm) != 0)
++			goto invalid;
++	} else if (same(key, "mlfq_quanta_ms")) {
++		if (parse_mlfq(value, cfg) != 0)
++			goto invalid;
++	} else if (same(key, "process")) {
++		if (parse_job(value, cfg) != 0)
++			goto invalid;
++	} else if (same(key, "csv_output")) {
++		if (strlen(value) >= sizeof(cfg->csv_output))
++			goto invalid;
++		strcpy(cfg->csv_output, value);
++	} else {
++		if (parse_uint(value, &number) != 0)
++			goto invalid;
++		if (same(key, "quantum_ms"))
++			cfg->quantum_ms = (unsigned int)number;
++		else if (same(key, "work_scale"))
++			cfg->work_scale = number;
++		else {
++			snprintf(error, error_size,
++			    "unknown configuration key: %s", key);
++			return -1;
++		}
++	}
++	return 0;
++
++invalid:
++	snprintf(error, error_size, "invalid value for %s: %s", key, value);
++	return -1;
++}
++
++int sched_config_load(const char *path, struct sched_config *cfg,
++	char *error, size_t error_size)
++{
++	FILE *file;
++	char line[1024];
++	unsigned long line_number;
++
++	file = fopen(path, "r");
++	if (file == NULL) {
++		snprintf(error, error_size, "cannot open %s: %s", path,
++		    strerror(errno));
++		return -1;
++	}
++	line_number = 0;
++	while (fgets(line, sizeof(line), file) != NULL) {
++		char *key;
++		char *value;
++		char *separator;
++		char *comment;
++
++		line_number++;
++		comment = strchr(line, '#');
++		if (comment != NULL)
++			*comment = '\0';
++		key = trim(line);
++		if (*key == '\0')
++			continue;
++		separator = strchr(key, '=');
++		if (separator == NULL) {
++			snprintf(error, error_size, "%s:%lu: expected key=value",
++			    path, line_number);
++			fclose(file);
++			return -1;
++		}
++		*separator = '\0';
++		value = trim(separator + 1);
++		key = trim(key);
++		if (set_value(cfg, key, value, error, error_size) != 0) {
++			char detail[SCHED_ERROR_MAX];
++			strncpy(detail, error, sizeof(detail) - 1);
++			detail[sizeof(detail) - 1] = '\0';
++			snprintf(error, error_size, "%s:%lu: %s", path,
++			    line_number, detail);
++			fclose(file);
++			return -1;
++		}
++	}
++	fclose(file);
++	if (cfg->job_count == 0) {
++		snprintf(error, error_size, "configuration contains no processes");
++		return -1;
++	}
++	if (cfg->quantum_ms == 0 || cfg->work_scale == 0) {
++		snprintf(error, error_size,
++		    "quantum_ms and work_scale must be greater than zero");
++		return -1;
++	}
++	return 0;
++}
++
++const char *sched_algorithm_name(enum sched_algorithm algorithm)
++{
++	if (algorithm == SCHED_RR)
++		return "RR";
++	if (algorithm == SCHED_SJF)
++		return "SJF";
++	if (algorithm == SCHED_PRIORITY)
++		return "PRIORITY";
++	if (algorithm == SCHED_MLFQ)
++		return "MLFQ";
++	return "ALL";
++}
+diff --git a/minix/commands/schedexperiment/run_schedexperiments.sh b/minix/commands/schedexperiment/run_schedexperiments.sh
+new file mode 100644
+index 00000000..e1ebc268
+--- /dev/null
++++ b/minix/commands/schedexperiment/run_schedexperiments.sh
+@@ -0,0 +1,39 @@
++#!/bin/sh
++
++set -e
++
++OUTPUT=${1:-/tmp/scheduling-matrix.csv}
++CONFIG=/tmp/scheduling-matrix.conf
++SINGLE=/tmp/scheduling-single.csv
++
++rm -f "$OUTPUT" "$CONFIG" "$SINGLE"
++
++for quantum in 5 10 20 40
++do
++	{
++		echo "algorithm=ALL"
++		echo "quantum_ms=$quantum"
++		echo "mlfq_quanta_ms=$quantum,$((quantum * 2)),$((quantum * 4))"
++		# Keep matrix runs practical on emulated 32-bit MINIX. Logical
++		# scheduling metrics are independent of this physical work multiplier.
++		echo "work_scale=1000"
++		echo "csv_output=$SINGLE"
++		echo "process=P1,0,80,3"
++		echo "process=P2,10,40,4"
++		echo "process=P3,20,60,0"
++		echo "process=P4,35,30,2"
++		echo "process=P5,50,50,1"
++	} > "$CONFIG"
++	schedexperiment -c "$CONFIG" >/dev/null
++	if [ ! -f "$OUTPUT" ]; then
++		awk -v q="$quantum" 'BEGIN { FS=OFS="," }
++		    NR == 1 { print "quantum_ms," $0; next }
++		    { print q, $0 }' "$SINGLE" > "$OUTPUT"
++	else
++		awk -v q="$quantum" 'BEGIN { FS=OFS="," }
++		    NR > 1 { print q, $0 }' "$SINGLE" >> "$OUTPUT"
++	fi
++done
++
++rm -f "$CONFIG" "$SINGLE"
++echo "Scheduling experiment matrix written to $OUTPUT"
+diff --git a/minix/commands/schedexperiment/schedexperiment.c b/minix/commands/schedexperiment/schedexperiment.c
+new file mode 100644
+index 00000000..17be7158
+--- /dev/null
++++ b/minix/commands/schedexperiment/schedexperiment.c
+@@ -0,0 +1,134 @@
++#include <errno.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++
++#include "schedexperiment.h"
++
++static void usage(const char *program)
++{
++	fprintf(stderr, "Usage: %s [-c config] [-o csv-output]\n", program);
++}
++
++static void print_result(const struct schedule_result *result)
++{
++	unsigned int index;
++
++	printf("%s: avg turnaround %.2f ms, avg waiting %.2f ms, ",
++	    sched_algorithm_name(result->algorithm),
++	    result->average_turnaround_ms, result->average_waiting_ms);
++	printf("avg response %.2f ms, makespan %u ms, switches %u\n",
++	    result->average_response_ms, result->makespan_ms,
++	    result->context_switches);
++	for (index = 0; index < result->job_count; index++) {
++		const struct job_result *job;
++
++		job = &result->jobs[index];
++		printf("  %-12s start=%u complete=%u turnaround=%u waiting=%u\n",
++		    job->name, job->start_ms, job->completion_ms,
++		    job->turnaround_ms, job->waiting_ms);
++	}
++}
++
++static int write_csv(const char *path, const struct schedule_result *results,
++	unsigned int result_count)
++{
++	FILE *file;
++	unsigned int result_index;
++
++	file = fopen(path, "w");
++	if (file == NULL) {
++		fprintf(stderr, "schedexperiment: cannot write %s: %s\n",
++		    path, strerror(errno));
++		return -1;
++	}
++	fprintf(file, "algorithm,process,arrival_ms,burst_ms,priority,start_ms,");
++	fprintf(file, "completion_ms,turnaround_ms,waiting_ms,response_ms,");
++	fprintf(file, "average_turnaround_ms,average_waiting_ms,");
++	fprintf(file, "average_response_ms,makespan_ms,context_switches,");
++	fprintf(file, "wall_elapsed_ms\n");
++	for (result_index = 0; result_index < result_count; result_index++) {
++		const struct schedule_result *result;
++		unsigned int job_index;
++
++		result = &results[result_index];
++		for (job_index = 0; job_index < result->job_count; job_index++) {
++			const struct job_result *job;
++
++			job = &result->jobs[job_index];
++			fprintf(file, "%s,%s,%u,%u,%u,%u,%u,%u,%u,%u,",
++			    sched_algorithm_name(result->algorithm), job->name,
++			    job->arrival_ms, job->burst_ms, job->priority,
++			    job->start_ms, job->completion_ms, job->turnaround_ms,
++			    job->waiting_ms, job->response_ms);
++			fprintf(file, "%.2f,%.2f,%.2f,%u,%u,%lu\n",
++			    result->average_turnaround_ms,
++			    result->average_waiting_ms,
++			    result->average_response_ms, result->makespan_ms,
++			    result->context_switches, result->wall_elapsed_ms);
++		}
++	}
++	return fclose(file) == 0 ? 0 : -1;
++}
++
++int main(int argc, char **argv)
++{
++	const char *config_path;
++	const char *output_override;
++	struct sched_config cfg;
++	struct schedule_result results[4];
++	unsigned int result_count;
++	char error[SCHED_ERROR_MAX];
++	int argument;
++	int first;
++	int last;
++	int algorithm;
++
++	config_path = "/etc/scheduler.conf";
++	output_override = NULL;
++	for (argument = 1; argument < argc; argument++) {
++		if (strcmp(argv[argument], "-c") == 0 && argument + 1 < argc)
++			config_path = argv[++argument];
++		else if (strcmp(argv[argument], "-o") == 0 && argument + 1 < argc)
++			output_override = argv[++argument];
++		else {
++			usage(argv[0]);
++			return 2;
++		}
++	}
++	sched_config_defaults(&cfg);
++	if (sched_config_load(config_path, &cfg, error, sizeof(error)) != 0) {
++		fprintf(stderr, "schedexperiment: %s\n", error);
++		return 1;
++	}
++	if (output_override != NULL) {
++		if (strlen(output_override) >= sizeof(cfg.csv_output)) {
++			fprintf(stderr, "schedexperiment: output path is too long\n");
++			return 1;
++		}
++		strcpy(cfg.csv_output, output_override);
++	}
++	if (cfg.algorithm == SCHED_ALL) {
++		first = SCHED_RR;
++		last = SCHED_MLFQ;
++	} else {
++		first = cfg.algorithm;
++		last = cfg.algorithm;
++	}
++	result_count = 0;
++	for (algorithm = first; algorithm <= last; algorithm++) {
++		if (schedule_run(&cfg, (enum sched_algorithm)algorithm,
++		    &results[result_count], error, sizeof(error)) != 0) {
++			fprintf(stderr, "schedexperiment: %s\n", error);
++			return 1;
++		}
++		print_result(&results[result_count]);
++		result_count++;
++	}
++	if (write_csv(cfg.csv_output, results, result_count) != 0) {
++		fprintf(stderr, "schedexperiment: failed to write CSV\n");
++		return 1;
++	}
++	printf("CSV results written to %s\n", cfg.csv_output);
++	return 0;
++}
+diff --git a/minix/commands/schedexperiment/schedexperiment.h b/minix/commands/schedexperiment/schedexperiment.h
+new file mode 100644
+index 00000000..83cfdb2e
+--- /dev/null
++++ b/minix/commands/schedexperiment/schedexperiment.h
+@@ -0,0 +1,70 @@
++#ifndef SCHEDEXPERIMENT_H
++#define SCHEDEXPERIMENT_H
++
++#include <stddef.h>
++#include <stdint.h>
++
++#define SCHED_MAX_JOBS 32
++#define SCHED_NAME_MAX 32
++#define SCHED_PATH_MAX 512
++#define SCHED_ERROR_MAX 256
++#define SCHED_MLFQ_LEVELS 3
++
++enum sched_algorithm {
++	SCHED_RR = 0,
++	SCHED_SJF = 1,
++	SCHED_PRIORITY = 2,
++	SCHED_MLFQ = 3,
++	SCHED_ALL = 4
++};
++
++struct job_config {
++	char name[SCHED_NAME_MAX];
++	unsigned int arrival_ms;
++	unsigned int burst_ms;
++	unsigned int priority;
++};
++
++struct sched_config {
++	enum sched_algorithm algorithm;
++	unsigned int quantum_ms;
++	unsigned int mlfq_quantum[SCHED_MLFQ_LEVELS];
++	unsigned long work_scale;
++	char csv_output[SCHED_PATH_MAX];
++	struct job_config jobs[SCHED_MAX_JOBS];
++	unsigned int job_count;
++};
++
++struct job_result {
++	char name[SCHED_NAME_MAX];
++	unsigned int arrival_ms;
++	unsigned int burst_ms;
++	unsigned int priority;
++	unsigned int start_ms;
++	unsigned int completion_ms;
++	unsigned int turnaround_ms;
++	unsigned int waiting_ms;
++	unsigned int response_ms;
++};
++
++struct schedule_result {
++	enum sched_algorithm algorithm;
++	struct job_result jobs[SCHED_MAX_JOBS];
++	unsigned int job_count;
++	double average_turnaround_ms;
++	double average_waiting_ms;
++	double average_response_ms;
++	unsigned int makespan_ms;
++	unsigned int context_switches;
++	unsigned long wall_elapsed_ms;
++};
++
++void sched_config_defaults(struct sched_config *cfg);
++int sched_config_load(const char *path, struct sched_config *cfg,
++	char *error, size_t error_size);
++const char *sched_algorithm_name(enum sched_algorithm algorithm);
++int schedule_run(const struct sched_config *cfg,
++	enum sched_algorithm algorithm, struct schedule_result *result,
++	char *error, size_t error_size);
++
++#endif
+diff --git a/minix/commands/schedexperiment/scheduler.c b/minix/commands/schedexperiment/scheduler.c
+new file mode 100644
+index 00000000..ecaf25a5
+--- /dev/null
++++ b/minix/commands/schedexperiment/scheduler.c
+@@ -0,0 +1,411 @@
++#include <errno.h>
++#include <signal.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <sys/time.h>
++#include <sys/types.h>
++#include <sys/wait.h>
++#include <unistd.h>
++
++#include "schedexperiment.h"
++
++struct child_command {
++	unsigned int run_ms;
++};
++
++struct child_reply {
++	unsigned int completed_ms;
++};
++
++struct job_state {
++	const struct job_config *cfg;
++	pid_t pid;
++	int command_fd;
++	int reply_fd;
++	unsigned int remaining_ms;
++	unsigned int start_ms;
++	unsigned int completion_ms;
++	unsigned int queue_level;
++	unsigned long queue_stamp;
++	int started;
++	int finished;
++};
++
++static int write_full(int fd, const void *buffer, size_t size)
++{
++	const char *bytes;
++	size_t done;
++	ssize_t count;
++
++	bytes = buffer;
++	done = 0;
++	while (done < size) {
++		count = write(fd, bytes + done, size - done);
++		if (count < 0 && errno == EINTR)
++			continue;
++		if (count <= 0)
++			return -1;
++		done += (size_t)count;
++	}
++	return 0;
++}
++
++static int read_full(int fd, void *buffer, size_t size)
++{
++	char *bytes;
++	size_t done;
++	ssize_t count;
++
++	bytes = buffer;
++	done = 0;
++	while (done < size) {
++		count = read(fd, bytes + done, size - done);
++		if (count < 0 && errno == EINTR)
++			continue;
++		if (count <= 0)
++			return -1;
++		done += (size_t)count;
++	}
++	return 0;
++}
++
++static void perform_work(unsigned int run_ms, unsigned long scale)
++{
++	volatile unsigned long value;
++	unsigned long outer;
++	unsigned long inner;
++
++	value = 0x335UL;
++	for (outer = 0; outer < run_ms; outer++) {
++		for (inner = 0; inner < scale; inner++)
++			value = value * 1664525UL + 1013904223UL;
++	}
++	(void)value;
++}
++
++static void child_main(int command_fd, int reply_fd, unsigned int burst_ms,
++	unsigned long work_scale)
++{
++	struct child_command command;
++	struct child_reply reply;
++	unsigned int completed;
++
++	completed = 0;
++	while (completed < burst_ms) {
++		if (read_full(command_fd, &command, sizeof(command)) != 0)
++			_exit(2);
++		if (command.run_ms == 0 ||
++		    command.run_ms > burst_ms - completed)
++			_exit(3);
++		perform_work(command.run_ms, work_scale);
++		completed += command.run_ms;
++		reply.completed_ms = command.run_ms;
++		if (write_full(reply_fd, &reply, sizeof(reply)) != 0)
++			_exit(4);
++	}
++	_exit(0);
++}
++
++static void close_children(struct job_state *states, unsigned int count,
++	int terminate)
++{
++	unsigned int index;
++
++	for (index = 0; index < count; index++) {
++		if (states[index].command_fd >= 0)
++			close(states[index].command_fd);
++		if (states[index].reply_fd >= 0)
++			close(states[index].reply_fd);
++		if (terminate && states[index].pid > 0)
++			kill(states[index].pid, SIGKILL);
++	}
++	for (index = 0; index < count; index++) {
++		if (states[index].pid > 0)
++			(void)waitpid(states[index].pid, NULL, 0);
++	}
++}
++
++static int create_children(const struct sched_config *cfg,
++	struct job_state *states, char *error, size_t error_size)
++{
++	unsigned int index;
++
++	for (index = 0; index < cfg->job_count; index++) {
++		int command_pipe[2];
++		int reply_pipe[2];
++		pid_t pid;
++
++		states[index].cfg = &cfg->jobs[index];
++		states[index].remaining_ms = cfg->jobs[index].burst_ms;
++		states[index].command_fd = -1;
++		states[index].reply_fd = -1;
++		states[index].queue_stamp = index;
++		if (pipe(command_pipe) != 0) {
++			snprintf(error, error_size, "pipe failed: %s", strerror(errno));
++			close_children(states, index, 1);
++			return -1;
++		}
++		if (pipe(reply_pipe) != 0) {
++			snprintf(error, error_size, "pipe failed: %s", strerror(errno));
++			close(command_pipe[0]);
++			close(command_pipe[1]);
++			close_children(states, index, 1);
++			return -1;
++		}
++		pid = fork();
++		if (pid < 0) {
++			snprintf(error, error_size, "fork failed: %s", strerror(errno));
++			close(command_pipe[0]);
++			close(command_pipe[1]);
++			close(reply_pipe[0]);
++			close(reply_pipe[1]);
++			close_children(states, index, 1);
++			return -1;
++		}
++		if (pid == 0) {
++			unsigned int prior;
++
++			close(command_pipe[1]);
++			close(reply_pipe[0]);
++			for (prior = 0; prior < index; prior++) {
++				close(states[prior].command_fd);
++				close(states[prior].reply_fd);
++			}
++			child_main(command_pipe[0], reply_pipe[1],
++			    cfg->jobs[index].burst_ms, cfg->work_scale);
++		}
++		close(command_pipe[0]);
++		close(reply_pipe[1]);
++		states[index].pid = pid;
++		states[index].command_fd = command_pipe[1];
++		states[index].reply_fd = reply_pipe[0];
++	}
++	return 0;
++}
++
++static int ready(const struct job_state *state, unsigned int now)
++{
++	return !state->finished && state->cfg->arrival_ms <= now;
++}
++
++static int next_arrival(const struct job_state *states, unsigned int count,
++	unsigned int now)
++{
++	unsigned int index;
++	unsigned int selected;
++	int found;
++
++	selected = 0;
++	found = 0;
++	for (index = 0; index < count; index++) {
++		if (!states[index].finished && states[index].cfg->arrival_ms > now &&
++		    (!found || states[index].cfg->arrival_ms < selected)) {
++			selected = states[index].cfg->arrival_ms;
++			found = 1;
++		}
++	}
++	return found ? (int)selected : -1;
++}
++
++static int select_rr(const struct job_state *states, unsigned int count,
++	unsigned int now, unsigned int *cursor)
++{
++	unsigned int offset;
++	unsigned int index;
++
++	for (offset = 0; offset < count; offset++) {
++		index = (*cursor + offset) % count;
++		if (ready(&states[index], now)) {
++			*cursor = (index + 1) % count;
++			return (int)index;
++		}
++	}
++	return -1;
++}
++
++static int select_sjf(const struct job_state *states, unsigned int count,
++	unsigned int now)
++{
++	unsigned int index;
++	int selected;
++
++	selected = -1;
++	for (index = 0; index < count; index++) {
++		if (ready(&states[index], now) && (selected < 0 ||
++		    states[index].remaining_ms < states[selected].remaining_ms ||
++		    (states[index].remaining_ms == states[selected].remaining_ms &&
++		    states[index].cfg->arrival_ms < states[selected].cfg->arrival_ms)))
++			selected = (int)index;
++	}
++	return selected;
++}
++
++static int select_priority(const struct job_state *states,
++	unsigned int count, unsigned int now)
++{
++	unsigned int index;
++	int selected;
++
++	selected = -1;
++	for (index = 0; index < count; index++) {
++		if (ready(&states[index], now) && (selected < 0 ||
++		    states[index].cfg->priority < states[selected].cfg->priority ||
++		    (states[index].cfg->priority == states[selected].cfg->priority &&
++		    states[index].cfg->arrival_ms < states[selected].cfg->arrival_ms)))
++			selected = (int)index;
++	}
++	return selected;
++}
++
++static int select_mlfq(const struct job_state *states, unsigned int count,
++	unsigned int now)
++{
++	unsigned int index;
++	int selected;
++
++	selected = -1;
++	for (index = 0; index < count; index++) {
++		if (ready(&states[index], now) && (selected < 0 ||
++		    states[index].queue_level < states[selected].queue_level ||
++		    (states[index].queue_level == states[selected].queue_level &&
++		    states[index].queue_stamp < states[selected].queue_stamp)))
++			selected = (int)index;
++	}
++	return selected;
++}
++
++static unsigned long elapsed_ms(const struct timeval *start,
++	const struct timeval *end)
++{
++	long seconds;
++	long microseconds;
++
++	seconds = end->tv_sec - start->tv_sec;
++	microseconds = end->tv_usec - start->tv_usec;
++	return (unsigned long)(seconds * 1000L + microseconds / 1000L);
++}
++
++int schedule_run(const struct sched_config *cfg,
++	enum sched_algorithm algorithm, struct schedule_result *result,
++	char *error, size_t error_size)
++{
++	struct job_state states[SCHED_MAX_JOBS];
++	struct timeval wall_start;
++	struct timeval wall_end;
++	unsigned int completed;
++	unsigned int now;
++	unsigned int cursor;
++	unsigned long stamp;
++	int selected;
++	unsigned int index;
++
++	memset(states, 0, sizeof(states));
++	memset(result, 0, sizeof(*result));
++	result->algorithm = algorithm;
++	result->job_count = cfg->job_count;
++	if (create_children(cfg, states, error, error_size) != 0)
++		return -1;
++	gettimeofday(&wall_start, NULL);
++	completed = 0;
++	now = 0;
++	cursor = 0;
++	stamp = cfg->job_count;
++	while (completed < cfg->job_count) {
++		unsigned int slice;
++		struct child_command command;
++		struct child_reply reply;
++		int status;
++
++		if (algorithm == SCHED_RR)
++			selected = select_rr(states, cfg->job_count, now, &cursor);
++		else if (algorithm == SCHED_SJF)
++			selected = select_sjf(states, cfg->job_count, now);
++		else if (algorithm == SCHED_PRIORITY)
++			selected = select_priority(states, cfg->job_count, now);
++		else
++			selected = select_mlfq(states, cfg->job_count, now);
++		if (selected < 0) {
++			selected = next_arrival(states, cfg->job_count, now);
++			if (selected < 0) {
++				snprintf(error, error_size, "scheduler reached invalid idle state");
++				close_children(states, cfg->job_count, 1);
++				return -1;
++			}
++			now = (unsigned int)selected;
++			continue;
++		}
++		if (!states[selected].started) {
++			states[selected].started = 1;
++			states[selected].start_ms = now;
++		}
++		if (algorithm == SCHED_SJF || algorithm == SCHED_PRIORITY)
++			slice = states[selected].remaining_ms;
++		else if (algorithm == SCHED_RR)
++			slice = cfg->quantum_ms;
++		else
++			slice = cfg->mlfq_quantum[states[selected].queue_level];
++		if (slice > states[selected].remaining_ms)
++			slice = states[selected].remaining_ms;
++		command.run_ms = slice;
++		if (write_full(states[selected].command_fd, &command,
++		    sizeof(command)) != 0 ||
++		    read_full(states[selected].reply_fd, &reply, sizeof(reply)) != 0 ||
++		    reply.completed_ms != slice) {
++			snprintf(error, error_size, "worker %s failed",
++			    states[selected].cfg->name);
++			close_children(states, cfg->job_count, 1);
++			return -1;
++		}
++		now += slice;
++		states[selected].remaining_ms -= slice;
++		result->context_switches++;
++		if (states[selected].remaining_ms == 0) {
++			states[selected].finished = 1;
++			states[selected].completion_ms = now;
++			close(states[selected].command_fd);
++			close(states[selected].reply_fd);
++			states[selected].command_fd = -1;
++			states[selected].reply_fd = -1;
++			if (waitpid(states[selected].pid, &status, 0) < 0 ||
++			    !WIFEXITED(status) || WEXITSTATUS(status) != 0) {
++				snprintf(error, error_size, "worker %s exited abnormally",
++				    states[selected].cfg->name);
++				states[selected].pid = -1;
++				close_children(states, cfg->job_count, 1);
++				return -1;
++			}
++			states[selected].pid = -1;
++			completed++;
++		} else if (algorithm == SCHED_MLFQ) {
++			if (states[selected].queue_level + 1 < SCHED_MLFQ_LEVELS)
++				states[selected].queue_level++;
++			states[selected].queue_stamp = stamp++;
++		}
++	}
++	gettimeofday(&wall_end, NULL);
++	result->makespan_ms = now;
++	result->wall_elapsed_ms = elapsed_ms(&wall_start, &wall_end);
++	for (index = 0; index < cfg->job_count; index++) {
++		struct job_result *job;
++
++		job = &result->jobs[index];
++		strcpy(job->name, cfg->jobs[index].name);
++		job->arrival_ms = cfg->jobs[index].arrival_ms;
++		job->burst_ms = cfg->jobs[index].burst_ms;
++		job->priority = cfg->jobs[index].priority;
++		job->start_ms = states[index].start_ms;
++		job->completion_ms = states[index].completion_ms;
++		job->turnaround_ms = job->completion_ms - job->arrival_ms;
++		job->waiting_ms = job->turnaround_ms - job->burst_ms;
++		job->response_ms = job->start_ms - job->arrival_ms;
++		result->average_turnaround_ms += job->turnaround_ms;
++		result->average_waiting_ms += job->waiting_ms;
++		result->average_response_ms += job->response_ms;
++	}
++	result->average_turnaround_ms /= cfg->job_count;
++	result->average_waiting_ms /= cfg->job_count;
++	result->average_response_ms /= cfg->job_count;
++	close_children(states, cfg->job_count, 0);
++	return 0;
++}
+diff --git a/minix/commands/schedexperiment/tests/known.conf b/minix/commands/schedexperiment/tests/known.conf
+new file mode 100644
+index 00000000..f1fdb09d
+--- /dev/null
++++ b/minix/commands/schedexperiment/tests/known.conf
+@@ -0,0 +1,10 @@
++algorithm=ALL
++quantum_ms=20
++mlfq_quanta_ms=10,20,40
++work_scale=1000
++csv_output=/tmp/schedexperiment-known.csv
++process=P1,0,80,3
++process=P2,10,40,4
++process=P3,20,60,0
++process=P4,35,30,2
++process=P5,50,50,1
+diff --git a/minix/commands/schedexperiment/tests/test_known.sh b/minix/commands/schedexperiment/tests/test_known.sh
+new file mode 100644
+index 00000000..8a23c593
+--- /dev/null
++++ b/minix/commands/schedexperiment/tests/test_known.sh
+@@ -0,0 +1,25 @@
++#!/bin/sh
++
++set -e
++
++schedexperiment -c known.conf >/tmp/schedexperiment-known.out
++
++check_average()
++{
++	algorithm=$1
++	expected_turnaround=$2
++	expected_waiting=$3
++	actual=`awk -F, -v a="$algorithm" '$1 == a { print $11 "," $12; exit }' \
++	    /tmp/schedexperiment-known.csv`
++	if [ "$actual" != "$expected_turnaround,$expected_waiting" ]; then
++		echo "FAIL: $algorithm expected $expected_turnaround,$expected_waiting got $actual" >&2
++		exit 1
++	fi
++}
++
++check_average RR 185.00 133.00
++check_average SJF 137.00 85.00
++check_average PRIORITY 155.00 103.00
++check_average MLFQ 191.00 139.00
++
++echo "PASS: known scheduling workload"
+diff --git a/minix/commands/vmexperiment/Makefile b/minix/commands/vmexperiment/Makefile
+new file mode 100644
+index 00000000..d71fbca0
+--- /dev/null
++++ b/minix/commands/vmexperiment/Makefile
+@@ -0,0 +1,10 @@
++PROG=	vmexperiment
++SRCS=	vmexperiment.c config.c simulator.c
++SCRIPTS=	run_vmexperiments.sh
++SCRIPTSDIR=	/usr/bin
++MAN=
++
++DPADD+=	${LIBSYS}
++LDADD+=	-lsys
++
++.include <bsd.prog.mk>
+diff --git a/minix/commands/vmexperiment/config.c b/minix/commands/vmexperiment/config.c
+new file mode 100644
+index 00000000..65392aab
+--- /dev/null
++++ b/minix/commands/vmexperiment/config.c
+@@ -0,0 +1,327 @@
++#include <ctype.h>
++#include <errno.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++
++#include "vmexperiment.h"
++
++static char *trim(char *text)
++{
++	char *end;
++
++	while (isspace((unsigned char)*text))
++		text++;
++	end = text + strlen(text);
++	while (end > text && isspace((unsigned char)end[-1]))
++		*--end = '\0';
++	return text;
++}
++
++static int equals_ignore_case(const char *left, const char *right)
++{
++	while (*left != '\0' && *right != '\0') {
++		if (tolower((unsigned char)*left) !=
++		    tolower((unsigned char)*right))
++			return 0;
++		left++;
++		right++;
++	}
++	return *left == '\0' && *right == '\0';
++}
++
++static int parse_u64(const char *text, uint64_t *value)
++{
++	char *end;
++	unsigned long long parsed;
++
++	errno = 0;
++	parsed = strtoull(text, &end, 0);
++	if (errno != 0 || end == text || *trim(end) != '\0')
++		return -1;
++	*value = (uint64_t)parsed;
++	return 0;
++}
++
++static int parse_level_bits(const char *text, struct vmexp_config *cfg)
++{
++	char buffer[256];
++	char *token;
++	unsigned int count;
++	uint64_t value;
++
++	if (strlen(text) >= sizeof(buffer))
++		return -1;
++	strcpy(buffer, text);
++	count = 0;
++	for (token = strtok(buffer, ","); token != NULL;
++	    token = strtok(NULL, ",")) {
++		if (count >= VMEXP_MAX_LEVELS ||
++		    parse_u64(trim(token), &value) != 0 || value == 0 ||
++		    value > 31)
++			return -1;
++		cfg->level_bits[count++] = (unsigned int)value;
++	}
++	cfg->level_bits_count = count;
++	return count > 0 ? 0 : -1;
++}
++
++void config_defaults(struct vmexp_config *cfg)
++{
++	memset(cfg, 0, sizeof(*cfg));
++	cfg->address_bits = 32;
++	cfg->page_size = 4096;
++	cfg->levels = 2;
++	cfg->level_bits[0] = 10;
++	cfg->level_bits[1] = 10;
++	cfg->level_bits_count = 2;
++	cfg->frames = 64;
++	cfg->policy = POLICY_BOTH;
++	cfg->trace_mode = TRACE_LOCALITY;
++	cfg->references = 10000;
++	cfg->working_set_bytes = 1024 * 1024;
++	cfg->hot_bytes = 128 * 1024;
++	cfg->access_stride = 64;
++	cfg->seed = 335;
++	strcpy(cfg->csv_output, "/tmp/vmexperiment.csv");
++}
++
++static int set_value(struct vmexp_config *cfg, const char *key,
++	const char *value, char *error, size_t error_size)
++{
++	uint64_t number;
++
++	if (equals_ignore_case(key, "algorithm")) {
++		if (equals_ignore_case(value, "FIFO"))
++			cfg->policy = POLICY_FIFO;
++		else if (equals_ignore_case(value, "LRU"))
++			cfg->policy = POLICY_LRU;
++		else if (equals_ignore_case(value, "BOTH"))
++			cfg->policy = POLICY_BOTH;
++		else
++			goto invalid;
++		return 0;
++	}
++	if (equals_ignore_case(key, "trace_mode")) {
++		if (equals_ignore_case(value, "sequential"))
++			cfg->trace_mode = TRACE_SEQUENTIAL;
++		else if (equals_ignore_case(value, "locality"))
++			cfg->trace_mode = TRACE_LOCALITY;
++		else if (equals_ignore_case(value, "random"))
++			cfg->trace_mode = TRACE_RANDOM;
++		else if (equals_ignore_case(value, "file"))
++			cfg->trace_mode = TRACE_FILE;
++		else
++			goto invalid;
++		return 0;
++	}
++	if (equals_ignore_case(key, "trace_file")) {
++		if (strlen(value) >= sizeof(cfg->trace_file))
++			goto invalid;
++		strcpy(cfg->trace_file, value);
++		return 0;
++	}
++	if (equals_ignore_case(key, "csv_output")) {
++		if (strlen(value) >= sizeof(cfg->csv_output))
++			goto invalid;
++		strcpy(cfg->csv_output, value);
++		return 0;
++	}
++	if (equals_ignore_case(key, "level_bits")) {
++		if (parse_level_bits(value, cfg) != 0)
++			goto invalid;
++		return 0;
++	}
++	if (parse_u64(value, &number) != 0)
++		goto invalid;
++	if (equals_ignore_case(key, "address_bits"))
++		cfg->address_bits = (unsigned int)number;
++	else if (equals_ignore_case(key, "page_size"))
++		cfg->page_size = number;
++	else if (equals_ignore_case(key, "levels"))
++		cfg->levels = (unsigned int)number;
++	else if (equals_ignore_case(key, "frames"))
++		cfg->frames = (unsigned int)number;
++	else if (equals_ignore_case(key, "references"))
++		cfg->references = number;
++	else if (equals_ignore_case(key, "working_set_bytes"))
++		cfg->working_set_bytes = number;
++	else if (equals_ignore_case(key, "hot_bytes"))
++		cfg->hot_bytes = number;
++	else if (equals_ignore_case(key, "access_stride"))
++		cfg->access_stride = number;
++	else if (equals_ignore_case(key, "seed"))
++		cfg->seed = (uint32_t)number;
++	else {
++		snprintf(error, error_size, "unknown configuration key: %s", key);
++		return -1;
++	}
++	return 0;
++
++invalid:
++	snprintf(error, error_size, "invalid value for %s: %s", key, value);
++	return -1;
++}
++
++int config_load(const char *path, struct vmexp_config *cfg,
++	char *error, size_t error_size)
++{
++	FILE *file;
++	char line[1024];
++	unsigned long line_number;
++
++	file = fopen(path, "r");
++	if (file == NULL) {
++		snprintf(error, error_size, "cannot open configuration %s: %s",
++		    path, strerror(errno));
++		return -1;
++	}
++	line_number = 0;
++	while (fgets(line, sizeof(line), file) != NULL) {
++		char *key;
++		char *value;
++		char *separator;
++		char *comment;
++
++		line_number++;
++		comment = strchr(line, '#');
++		if (comment != NULL)
++			*comment = '\0';
++		key = trim(line);
++		if (*key == '\0')
++			continue;
++		separator = strchr(key, '=');
++		if (separator == NULL) {
++			snprintf(error, error_size,
++			    "%s:%lu: expected key=value", path, line_number);
++			fclose(file);
++			return -1;
++		}
++		*separator = '\0';
++		value = trim(separator + 1);
++		key = trim(key);
++		if (set_value(cfg, key, value, error, error_size) != 0) {
++			char detail[VMEXP_ERROR_MAX];
++			strncpy(detail, error, sizeof(detail) - 1);
++			detail[sizeof(detail) - 1] = '\0';
++			snprintf(error, error_size, "%s:%lu: %s", path,
++			    line_number, detail);
++			fclose(file);
++			return -1;
++		}
++	}
++	if (ferror(file)) {
++		snprintf(error, error_size, "error reading %s", path);
++		fclose(file);
++		return -1;
++	}
++	fclose(file);
++	return config_validate(cfg, error, error_size);
++}
++
++static unsigned int power_of_two_shift(uint64_t value)
++{
++	unsigned int shift;
++
++	if (value == 0 || (value & (value - 1)) != 0)
++		return 0;
++	shift = 0;
++	while (value > 1) {
++		value >>= 1;
++		shift++;
++	}
++	return shift;
++}
++
++int config_validate(const struct vmexp_config *cfg,
++	char *error, size_t error_size)
++{
++	unsigned int offset_bits;
++	unsigned int hierarchy_bits;
++	unsigned int level;
++
++	if (cfg->address_bits < 8 || cfg->address_bits > 63) {
++		snprintf(error, error_size, "address_bits must be between 8 and 63");
++		return -1;
++	}
++	offset_bits = power_of_two_shift(cfg->page_size);
++	if (offset_bits == 0 || offset_bits >= cfg->address_bits) {
++		snprintf(error, error_size,
++		    "page_size must be a power of two smaller than the address space");
++		return -1;
++	}
++	if (cfg->levels == 0 || cfg->levels > VMEXP_MAX_LEVELS) {
++		snprintf(error, error_size, "levels must be between 1 and %d",
++		    VMEXP_MAX_LEVELS);
++		return -1;
++	}
++	if (cfg->level_bits_count != cfg->levels) {
++		snprintf(error, error_size,
++		    "level_bits must contain exactly one value per level");
++		return -1;
++	}
++	hierarchy_bits = 0;
++	for (level = 0; level < cfg->levels; level++) {
++		if (cfg->level_bits[level] == 0 || cfg->level_bits[level] > 31) {
++			snprintf(error, error_size, "each level_bits value must be 1..31");
++			return -1;
++		}
++		hierarchy_bits += cfg->level_bits[level];
++	}
++	if (hierarchy_bits + offset_bits != cfg->address_bits) {
++		snprintf(error, error_size,
++		    "sum(level_bits) + log2(page_size) must equal address_bits");
++		return -1;
++	}
++	if (cfg->frames == 0) {
++		snprintf(error, error_size, "frames must be greater than zero");
++		return -1;
++	}
++	if (cfg->trace_mode == TRACE_FILE) {
++		if (cfg->trace_file[0] == '\0') {
++			snprintf(error, error_size,
++			    "trace_file is required when trace_mode=file");
++			return -1;
++		}
++	} else {
++		if (cfg->references == 0 || cfg->working_set_bytes == 0 ||
++		    cfg->access_stride == 0) {
++			snprintf(error, error_size,
++			    "references, working_set_bytes, and access_stride must be greater than zero");
++			return -1;
++		}
++		if (cfg->hot_bytes == 0 ||
++		    cfg->hot_bytes > cfg->working_set_bytes) {
++			snprintf(error, error_size,
++			    "hot_bytes must be between 1 and working_set_bytes");
++			return -1;
++		}
++		if (cfg->working_set_bytes - 1 >
++		    (((uint64_t)1 << cfg->address_bits) - 1)) {
++			snprintf(error, error_size,
++			    "working_set_bytes exceeds the configured address space");
++			return -1;
++		}
++	}
++	return 0;
++}
++
++const char *policy_name(enum replacement_policy policy)
++{
++	if (policy == POLICY_FIFO)
++		return "FIFO";
++	if (policy == POLICY_LRU)
++		return "LRU";
++	return "BOTH";
++}
++
++const char *trace_mode_name(enum trace_mode mode)
++{
++	if (mode == TRACE_SEQUENTIAL)
++		return "sequential";
++	if (mode == TRACE_LOCALITY)
++		return "locality";
++	if (mode == TRACE_RANDOM)
++		return "random";
++	return "file";
++}
+diff --git a/minix/commands/vmexperiment/run_vmexperiments.sh b/minix/commands/vmexperiment/run_vmexperiments.sh
+new file mode 100644
+index 00000000..46d24149
+--- /dev/null
++++ b/minix/commands/vmexperiment/run_vmexperiments.sh
+@@ -0,0 +1,83 @@
++#!/bin/sh
++
++# Run the Requirement 2 experiment matrix. Each case runs FIFO and LRU over
++# the same deterministic locality trace. The final file contains 72 rows:
++# 4 page sizes x 3 hierarchy depths x 3 frame counts x 2 algorithms.
++
++set -e
++
++OUTPUT=${1:-/tmp/vmexperiment-matrix.csv}
++CONFIG=/tmp/vmexperiment-matrix.conf
++SINGLE=/tmp/vmexperiment-single.csv
++
++rm -f "$OUTPUT" "$CONFIG" "$SINGLE"
++
++run_case()
++{
++	page_size=$1
++	levels=$2
++	level_bits=$3
++	frames=$4
++
++	rm -f "$SINGLE"
++	{
++		echo "address_bits=32"
++		echo "page_size=$page_size"
++		echo "levels=$levels"
++		echo "level_bits=$level_bits"
++		echo "frames=$frames"
++		echo "algorithm=BOTH"
++		echo "trace_mode=locality"
++		echo "references=10000"
++		echo "working_set_bytes=1048576"
++		echo "hot_bytes=131072"
++		echo "access_stride=64"
++		echo "seed=335"
++		echo "csv_output=$SINGLE"
++	} > "$CONFIG"
++
++	vmexperiment -c "$CONFIG" >/dev/null 2>/tmp/vmexperiment-matrix.log &
++	vm_pid=$!
++	attempt=0
++	while [ "$attempt" -lt 120 ]
++	do
++		if [ -f "$SINGLE" ] && [ "`wc -l < "$SINGLE"`" -ge 3 ]; then
++			break
++		fi
++		sleep 1
++		attempt=`expr "$attempt" + 1`
++	done
++	if [ ! -f "$SINGLE" ] || [ "`wc -l < "$SINGLE"`" -lt 3 ]; then
++		kill -9 "$vm_pid" 2>/dev/null || true
++		echo "vmexperiment case timed out" >&2
++		exit 1
++	fi
++	# This MINIX 3.3 image can spin in libc process teardown after the CSV is
++	# durably closed. Stop only the completed worker, then consume its results.
++	kill -9 "$vm_pid" 2>/dev/null || true
++	wait "$vm_pid" 2>/dev/null || true
++	if [ ! -f "$OUTPUT" ]; then
++		cat "$SINGLE" > "$OUTPUT"
++	else
++		tail -n +2 "$SINGLE" >> "$OUTPUT"
++	fi
++}
++
++for frames in 16 32 64
++do
++	run_case 1024 1 22 "$frames"
++	run_case 1024 2 11,11 "$frames"
++	run_case 1024 3 8,7,7 "$frames"
++	run_case 2048 1 21 "$frames"
++	run_case 2048 2 11,10 "$frames"
++	run_case 2048 3 7,7,7 "$frames"
++	run_case 4096 1 20 "$frames"
++	run_case 4096 2 10,10 "$frames"
++	run_case 4096 3 7,7,6 "$frames"
++	run_case 8192 1 19 "$frames"
++	run_case 8192 2 10,9 "$frames"
++	run_case 8192 3 7,6,6 "$frames"
++done
++
++rm -f "$CONFIG" "$SINGLE"
++echo "Experiment matrix written to $OUTPUT"
+diff --git a/minix/commands/vmexperiment/simulator.c b/minix/commands/vmexperiment/simulator.c
+new file mode 100644
+index 00000000..82f4a9a0
+--- /dev/null
++++ b/minix/commands/vmexperiment/simulator.c
+@@ -0,0 +1,384 @@
++#include <errno.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++
++#include "vmexperiment.h"
++
++struct page_entry {
++	uint64_t virtual_page;
++	uint64_t loaded_at;
++	uint64_t last_access;
++	unsigned int frame;
++	int present;
++};
++
++struct table_slot {
++	uint64_t index;
++	void *value;
++	struct table_slot *next;
++};
++
++struct table_node {
++	unsigned int level;
++	struct table_slot *slots;
++};
++
++struct simulator {
++	const struct vmexp_config *cfg;
++	struct table_node *root;
++	struct page_entry **frames;
++	uint64_t tick;
++	struct simulation_result result;
++};
++
++static uint32_t random_next(uint32_t *state)
++{
++	*state = *state * 1664525U + 1013904223U;
++	return *state;
++}
++
++static int append_address(uint64_t **items, size_t *count, size_t *capacity,
++	uint64_t address, char *error, size_t error_size)
++{
++	uint64_t *grown;
++	size_t new_capacity;
++
++	if (*count == *capacity) {
++		new_capacity = *capacity == 0 ? 1024 : *capacity * 2;
++		if (new_capacity < *capacity ||
++		    new_capacity > ((size_t)-1) / sizeof(**items)) {
++			snprintf(error, error_size, "trace is too large");
++			return -1;
++		}
++		grown = realloc(*items, new_capacity * sizeof(**items));
++		if (grown == NULL) {
++			snprintf(error, error_size, "not enough memory for trace");
++			return -1;
++		}
++		*items = grown;
++		*capacity = new_capacity;
++	}
++	(*items)[(*count)++] = address;
++	return 0;
++}
++
++static int trace_from_file(const struct vmexp_config *cfg,
++	uint64_t **addresses, size_t *count, char *error, size_t error_size)
++{
++	FILE *file;
++	char line[512];
++	size_t capacity;
++	unsigned long line_number;
++
++	file = fopen(cfg->trace_file, "r");
++	if (file == NULL) {
++		snprintf(error, error_size, "cannot open trace %s: %s",
++		    cfg->trace_file, strerror(errno));
++		return -1;
++	}
++	capacity = 0;
++	line_number = 0;
++	while (fgets(line, sizeof(line), file) != NULL) {
++		char *text;
++		char *end;
++		char *comment;
++		uint64_t address;
++
++		line_number++;
++		comment = strchr(line, '#');
++		if (comment != NULL)
++			*comment = '\0';
++		text = line;
++		while (*text == ' ' || *text == '\t' || *text == '\r' ||
++		    *text == '\n')
++			text++;
++		if (*text == '\0')
++			continue;
++		errno = 0;
++		address = strtoull(text, &end, 0);
++		while (*end == ' ' || *end == '\t' || *end == '\r' ||
++		    *end == '\n')
++			end++;
++		if (errno != 0 || end == text || *end != '\0') {
++			snprintf(error, error_size,
++			    "%s:%lu: invalid address", cfg->trace_file, line_number);
++			fclose(file);
++			free(*addresses);
++			*addresses = NULL;
++			*count = 0;
++			return -1;
++		}
++		if (append_address(addresses, count, &capacity, address,
++		    error, error_size) != 0) {
++			fclose(file);
++			free(*addresses);
++			*addresses = NULL;
++			*count = 0;
++			return -1;
++		}
++	}
++	fclose(file);
++	if (*count == 0) {
++		snprintf(error, error_size, "trace file contains no addresses");
++		free(*addresses);
++		*addresses = NULL;
++		return -1;
++	}
++	return 0;
++}
++
++int trace_build(const struct vmexp_config *cfg, uint64_t **addresses,
++	size_t *count, char *error, size_t error_size)
++{
++	uint64_t index;
++	uint32_t state;
++
++	*addresses = NULL;
++	*count = 0;
++	if (cfg->trace_mode == TRACE_FILE)
++		return trace_from_file(cfg, addresses, count, error, error_size);
++	if (cfg->references > ((size_t)-1) / sizeof(**addresses)) {
++		snprintf(error, error_size, "reference count is too large");
++		return -1;
++	}
++	*addresses = malloc((size_t)cfg->references * sizeof(**addresses));
++	if (*addresses == NULL) {
++		snprintf(error, error_size, "not enough memory for trace");
++		return -1;
++	}
++	state = cfg->seed;
++	for (index = 0; index < cfg->references; index++) {
++		if (cfg->trace_mode == TRACE_SEQUENTIAL) {
++			(*addresses)[index] =
++			    (index * cfg->access_stride) % cfg->working_set_bytes;
++		} else if (cfg->trace_mode == TRACE_RANDOM) {
++			(*addresses)[index] =
++			    random_next(&state) % cfg->working_set_bytes;
++		} else {
++			if ((random_next(&state) % 100) < 80)
++				(*addresses)[index] =
++				    random_next(&state) % cfg->hot_bytes;
++			else
++				(*addresses)[index] =
++				    random_next(&state) % cfg->working_set_bytes;
++		}
++	}
++	*count = (size_t)cfg->references;
++	return 0;
++}
++
++static struct table_node *node_create(struct simulator *sim,
++	unsigned int level)
++{
++	struct table_node *node;
++
++	node = calloc(1, sizeof(*node));
++	if (node != NULL) {
++		node->level = level;
++		sim->result.page_table_nodes++;
++		sim->result.page_table_bytes += sizeof(*node);
++	}
++	return node;
++}
++
++static struct table_slot *slot_find(struct table_node *node, uint64_t index)
++{
++	struct table_slot *slot;
++
++	for (slot = node->slots; slot != NULL; slot = slot->next) {
++		if (slot->index == index)
++			return slot;
++	}
++	return NULL;
++}
++
++static struct table_slot *slot_create(struct simulator *sim,
++	struct table_node *node, uint64_t index)
++{
++	struct table_slot *slot;
++
++	slot = calloc(1, sizeof(*slot));
++	if (slot == NULL)
++		return NULL;
++	slot->index = index;
++	slot->next = node->slots;
++	node->slots = slot;
++	sim->result.page_table_entries++;
++	sim->result.page_table_bytes += sizeof(*slot);
++	return slot;
++}
++
++static uint64_t level_index(const struct vmexp_config *cfg,
++	uint64_t virtual_page, unsigned int wanted_level)
++{
++	unsigned int level;
++	unsigned int lower_bits;
++	uint64_t mask;
++
++	lower_bits = 0;
++	for (level = wanted_level + 1; level < cfg->levels; level++)
++		lower_bits += cfg->level_bits[level];
++	mask = ((uint64_t)1 << cfg->level_bits[wanted_level]) - 1;
++	return (virtual_page >> lower_bits) & mask;
++}
++
++static struct page_entry *page_lookup(struct simulator *sim,
++	uint64_t virtual_page, int create)
++{
++	struct table_node *node;
++	struct table_node *child;
++	struct table_slot *slot;
++	struct page_entry *page;
++	unsigned int level;
++	uint64_t index;
++
++	node = sim->root;
++	for (level = 0; level < sim->cfg->levels; level++) {
++		index = level_index(sim->cfg, virtual_page, level);
++		slot = slot_find(node, index);
++		if (slot == NULL) {
++			if (!create)
++				return NULL;
++			slot = slot_create(sim, node, index);
++			if (slot == NULL)
++				return NULL;
++			if (level + 1 == sim->cfg->levels) {
++				page = calloc(1, sizeof(*page));
++				if (page == NULL)
++					return NULL;
++				page->virtual_page = virtual_page;
++				slot->value = page;
++				sim->result.page_table_bytes += sizeof(*page);
++			} else {
++				child = node_create(sim, level + 1);
++				if (child == NULL)
++					return NULL;
++				slot->value = child;
++			}
++		}
++		if (level + 1 == sim->cfg->levels)
++			return (struct page_entry *)slot->value;
++		node = (struct table_node *)slot->value;
++	}
++	return NULL;
++}
++
++static unsigned int select_frame(struct simulator *sim,
++	enum replacement_policy policy)
++{
++	unsigned int frame;
++	unsigned int selected;
++	uint64_t selected_time;
++
++	for (frame = 0; frame < sim->cfg->frames; frame++) {
++		if (sim->frames[frame] == NULL)
++			return frame;
++	}
++	selected = 0;
++	selected_time = policy == POLICY_FIFO ?
++	    sim->frames[0]->loaded_at : sim->frames[0]->last_access;
++	for (frame = 1; frame < sim->cfg->frames; frame++) {
++		uint64_t candidate_time;
++
++		candidate_time = policy == POLICY_FIFO ?
++		    sim->frames[frame]->loaded_at :
++		    sim->frames[frame]->last_access;
++		if (candidate_time < selected_time) {
++			selected = frame;
++			selected_time = candidate_time;
++		}
++	}
++	return selected;
++}
++
++static int access_page(struct simulator *sim, uint64_t address,
++	enum replacement_policy policy)
++{
++	struct page_entry *page;
++	struct page_entry *victim;
++	uint64_t virtual_page;
++	unsigned int frame;
++
++	virtual_page = address / sim->cfg->page_size;
++	page = page_lookup(sim, virtual_page, 1);
++	if (page == NULL)
++		return -1;
++	sim->tick++;
++	sim->result.references++;
++	if (page->present) {
++		sim->result.hits++;
++		page->last_access = sim->tick;
++		return 0;
++	}
++	sim->result.page_faults++;
++	frame = select_frame(sim, policy);
++	victim = sim->frames[frame];
++	if (victim != NULL) {
++		victim->present = 0;
++		sim->result.replacements++;
++	}
++	page->present = 1;
++	page->frame = frame;
++	page->loaded_at = sim->tick;
++	page->last_access = sim->tick;
++	sim->frames[frame] = page;
++	return 0;
++}
++
++static void node_destroy(struct table_node *node, unsigned int levels)
++{
++	struct table_slot *slot;
++	struct table_slot *next;
++
++	if (node == NULL)
++		return;
++	for (slot = node->slots; slot != NULL; slot = next) {
++		next = slot->next;
++		if (node->level + 1 == levels)
++			free(slot->value);
++		else
++			node_destroy((struct table_node *)slot->value, levels);
++		free(slot);
++	}
++	free(node);
++}
++
++int simulate(const struct vmexp_config *cfg, const uint64_t *addresses,
++	size_t count, enum replacement_policy policy,
++	struct simulation_result *result, char *error, size_t error_size)
++{
++	struct simulator sim;
++	size_t index;
++	unsigned int frame;
++
++	memset(&sim, 0, sizeof(sim));
++	sim.cfg = cfg;
++	sim.result.policy = policy;
++	sim.root = node_create(&sim, 0);
++	sim.frames = calloc(cfg->frames, sizeof(*sim.frames));
++	if (sim.root == NULL || sim.frames == NULL) {
++		snprintf(error, error_size, "not enough memory for simulator");
++		node_destroy(sim.root, cfg->levels);
++		free(sim.frames);
++		return -1;
++	}
++	for (index = 0; index < count; index++) {
++		if (access_page(&sim, addresses[index], policy) != 0) {
++			snprintf(error, error_size,
++			    "not enough memory while translating reference %lu",
++			    (unsigned long)index);
++			node_destroy(sim.root, cfg->levels);
++			free(sim.frames);
++			return -1;
++		}
++	}
++	for (frame = 0; frame < cfg->frames; frame++) {
++		if (sim.frames[frame] == NULL)
++			sim.result.empty_frames++;
++	}
++	*result = sim.result;
++	node_destroy(sim.root, cfg->levels);
++	free(sim.frames);
++	return 0;
++}
+diff --git a/minix/commands/vmexperiment/tests/known.conf b/minix/commands/vmexperiment/tests/known.conf
+new file mode 100644
+index 00000000..dc61ae1a
+--- /dev/null
++++ b/minix/commands/vmexperiment/tests/known.conf
+@@ -0,0 +1,9 @@
++address_bits=32
++page_size=4096
++levels=2
++level_bits=10,10
++frames=3
++algorithm=BOTH
++trace_mode=file
++trace_file=known.trace
++csv_output=/tmp/vmexperiment-known.csv
+diff --git a/minix/commands/vmexperiment/tests/known.trace b/minix/commands/vmexperiment/tests/known.trace
+new file mode 100644
+index 00000000..34ef80f7
+--- /dev/null
++++ b/minix/commands/vmexperiment/tests/known.trace
+@@ -0,0 +1,13 @@
++# Belady reference string, represented as byte addresses for 4 KiB pages.
++0x1000
++0x2000
++0x3000
++0x4000
++0x1000
++0x2000
++0x5000
++0x1000
++0x2000
++0x3000
++0x4000
++0x5000
+diff --git a/minix/commands/vmexperiment/tests/test_known.sh b/minix/commands/vmexperiment/tests/test_known.sh
+new file mode 100644
+index 00000000..d68be4ea
+--- /dev/null
++++ b/minix/commands/vmexperiment/tests/test_known.sh
+@@ -0,0 +1,35 @@
++#!/bin/sh
++
++# Run from this tests directory after vmexperiment is installed.
++
++set -e
++
++rm -f /tmp/vmexperiment-known.csv
++vmexperiment -c known.conf >/tmp/vmexperiment-known.out 2>/tmp/vmexperiment-known.err &
++vm_pid=$!
++attempt=0
++while [ "$attempt" -lt 30 ]
++do
++	if [ -f /tmp/vmexperiment-known.csv ] &&
++	    [ "`wc -l < /tmp/vmexperiment-known.csv`" -ge 3 ]; then
++		break
++	fi
++	sleep 1
++	attempt=`expr "$attempt" + 1`
++done
++kill -9 "$vm_pid" 2>/dev/null || true
++wait "$vm_pid" 2>/dev/null || true
++
++fifo_faults=`awk -F, '$1 == "FIFO" { print $9 }' /tmp/vmexperiment-known.csv`
++lru_faults=`awk -F, '$1 == "LRU" { print $9 }' /tmp/vmexperiment-known.csv`
++
++if [ "$fifo_faults" != "9" ]; then
++	echo "FAIL: expected 9 FIFO faults, got $fifo_faults" >&2
++	exit 1
++fi
++if [ "$lru_faults" != "10" ]; then
++	echo "FAIL: expected 10 LRU faults, got $lru_faults" >&2
++	exit 1
++fi
++
++echo "PASS: known FIFO/LRU reference string"
+diff --git a/minix/commands/vmexperiment/vmexperiment.c b/minix/commands/vmexperiment/vmexperiment.c
+new file mode 100644
+index 00000000..d7f9abd4
+--- /dev/null
++++ b/minix/commands/vmexperiment/vmexperiment.c
+@@ -0,0 +1,225 @@
++#include <errno.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++
++#include "vmexperiment.h"
++
++struct real_vm_stats {
++	int available;
++	unsigned int page_size;
++	unsigned long total;
++	unsigned long free;
++	unsigned long largest;
++	unsigned long cached;
++};
++
++static void usage(const char *program)
++{
++	fprintf(stderr,
++	    "Usage: %s [-c config] [-o csv-output] [-t trace-file]\n",
++	    program);
++}
++
++static void collect_real_stats(struct real_vm_stats *stats)
++{
++	memset(stats, 0, sizeof(*stats));
++}
++
++static void print_configuration(const struct vmexp_config *cfg,
++	const struct real_vm_stats *before)
++{
++	unsigned int level;
++
++	printf("VM experiment configuration\n");
++	printf("  address bits: %u\n", cfg->address_bits);
++	printf("  simulated page size: %llu bytes\n",
++	    (unsigned long long)cfg->page_size);
++	printf("  hierarchy: %u levels (", cfg->levels);
++	for (level = 0; level < cfg->levels; level++)
++		printf("%s%u", level == 0 ? "" : ",", cfg->level_bits[level]);
++	printf(" bits)\n");
++	printf("  simulated frames: %u\n", cfg->frames);
++	printf("  replacement: %s\n", policy_name(cfg->policy));
++	printf("  trace: %s\n", trace_mode_name(cfg->trace_mode));
++	if (before->available) {
++		printf("Actual MINIX VM before run\n");
++		printf("  hardware page size: %u bytes\n", before->page_size);
++		printf("  total/free/cached frames: %lu/%lu/%lu\n",
++		    before->total, before->free, before->cached);
++	}
++}
++
++static void print_result(const struct simulation_result *result)
++{
++	double hit_ratio;
++
++	hit_ratio = result->references == 0 ? 0.0 :
++	    (double)result->hits / (double)result->references;
++	printf("%s results\n", policy_name(result->policy));
++	printf("  references: %llu\n",
++	    (unsigned long long)result->references);
++	printf("  hits: %llu\n", (unsigned long long)result->hits);
++	printf("  page faults: %llu\n",
++	    (unsigned long long)result->page_faults);
++	printf("  replacements: %llu\n",
++	    (unsigned long long)result->replacements);
++	printf("  empty frames: %llu\n",
++	    (unsigned long long)result->empty_frames);
++	printf("  hit ratio: %.6f\n", hit_ratio);
++	printf("  hierarchy nodes/entries/bytes: %llu/%llu/%llu\n",
++	    (unsigned long long)result->page_table_nodes,
++	    (unsigned long long)result->page_table_entries,
++	    (unsigned long long)result->page_table_bytes);
++}
++
++static int write_csv(const char *path, const struct vmexp_config *cfg,
++	const struct simulation_result *results, size_t result_count,
++	const struct real_vm_stats *before, const struct real_vm_stats *after)
++{
++	FILE *file;
++	size_t index;
++
++	file = fopen(path, "w");
++	if (file == NULL) {
++		fprintf(stderr, "vmexperiment: cannot write %s: %s\n",
++		    path, strerror(errno));
++		return -1;
++	}
++	fprintf(file, "algorithm,trace_mode,address_bits,page_size,levels,");
++	fprintf(file, "frames,references,hits,page_faults,replacements,");
++	fprintf(file, "empty_frames,hit_ratio,page_table_nodes,");
++	fprintf(file, "page_table_entries,page_table_bytes,");
++	fprintf(file, "real_page_size,real_free_before,real_free_after,");
++	fprintf(file, "real_cached_before,real_cached_after\n");
++	for (index = 0; index < result_count; index++) {
++		const struct simulation_result *result;
++		double hit_ratio;
++
++		result = &results[index];
++		hit_ratio = result->references == 0 ? 0.0 :
++		    (double)result->hits / (double)result->references;
++		fprintf(file, "%s,%s,%u,%llu,%u,%u,%llu,%llu,%llu,%llu,",
++		    policy_name(result->policy), trace_mode_name(cfg->trace_mode),
++		    cfg->address_bits, (unsigned long long)cfg->page_size,
++		    cfg->levels, cfg->frames,
++		    (unsigned long long)result->references,
++		    (unsigned long long)result->hits,
++		    (unsigned long long)result->page_faults,
++		    (unsigned long long)result->replacements);
++		fprintf(file, "%llu,%.6f,%llu,%llu,%llu,",
++		    (unsigned long long)result->empty_frames, hit_ratio,
++		    (unsigned long long)result->page_table_nodes,
++		    (unsigned long long)result->page_table_entries,
++		    (unsigned long long)result->page_table_bytes);
++		if (before->available && after->available)
++			fprintf(file, "%u,%lu,%lu,%lu,%lu\n", before->page_size,
++			    before->free, after->free, before->cached, after->cached);
++		else
++			fprintf(file, "NA,NA,NA,NA,NA\n");
++	}
++	if (fclose(file) != 0) {
++		fprintf(stderr, "vmexperiment: error closing %s\n", path);
++		return -1;
++	}
++	return 0;
++}
++
++int main(int argc, char **argv)
++{
++	const char *config_path;
++	const char *output_override;
++	const char *trace_override;
++	struct vmexp_config cfg;
++	struct simulation_result results[2];
++	struct real_vm_stats before;
++	struct real_vm_stats after;
++	uint64_t *addresses;
++	size_t address_count;
++	size_t result_count;
++	char error[VMEXP_ERROR_MAX];
++	int index;
++
++	config_path = "/etc/paging.conf";
++	output_override = NULL;
++	trace_override = NULL;
++	for (index = 1; index < argc; index++) {
++		if (strcmp(argv[index], "-c") == 0 && index + 1 < argc)
++			config_path = argv[++index];
++		else if (strcmp(argv[index], "-o") == 0 && index + 1 < argc)
++			output_override = argv[++index];
++		else if (strcmp(argv[index], "-t") == 0 && index + 1 < argc)
++			trace_override = argv[++index];
++		else {
++			usage(argv[0]);
++			return 2;
++		}
++	}
++	config_defaults(&cfg);
++	fprintf(stderr, "vmexperiment: loading configuration\n");
++	if (config_load(config_path, &cfg, error, sizeof(error)) != 0) {
++		fprintf(stderr, "vmexperiment: %s\n", error);
++		return 1;
++	}
++	if (output_override != NULL) {
++		if (strlen(output_override) >= sizeof(cfg.csv_output)) {
++			fprintf(stderr, "vmexperiment: output path is too long\n");
++			return 1;
++		}
++		strcpy(cfg.csv_output, output_override);
++	}
++	if (trace_override != NULL) {
++		if (strlen(trace_override) >= sizeof(cfg.trace_file)) {
++			fprintf(stderr, "vmexperiment: trace path is too long\n");
++			return 1;
++		}
++		strcpy(cfg.trace_file, trace_override);
++		cfg.trace_mode = TRACE_FILE;
++	}
++	if (config_validate(&cfg, error, sizeof(error)) != 0) {
++		fprintf(stderr, "vmexperiment: %s\n", error);
++		return 1;
++	}
++	fprintf(stderr, "vmexperiment: building address trace\n");
++	if (trace_build(&cfg, &addresses, &address_count,
++	    error, sizeof(error)) != 0) {
++		fprintf(stderr, "vmexperiment: %s\n", error);
++		return 1;
++	}
++	fprintf(stderr, "vmexperiment: collecting optional VM context\n");
++	collect_real_stats(&before);
++	fprintf(stderr, "vmexperiment: starting replacement simulation\n");
++	print_configuration(&cfg, &before);
++	result_count = 0;
++	if (cfg.policy == POLICY_FIFO || cfg.policy == POLICY_BOTH) {
++		fprintf(stderr, "vmexperiment: simulating FIFO\n");
++		if (simulate(&cfg, addresses, address_count, POLICY_FIFO,
++		    &results[result_count], error, sizeof(error)) != 0) {
++			fprintf(stderr, "vmexperiment: %s\n", error);
++			free(addresses);
++			return 1;
++		}
++		print_result(&results[result_count++]);
++	}
++	if (cfg.policy == POLICY_LRU || cfg.policy == POLICY_BOTH) {
++		fprintf(stderr, "vmexperiment: simulating LRU\n");
++		if (simulate(&cfg, addresses, address_count, POLICY_LRU,
++		    &results[result_count], error, sizeof(error)) != 0) {
++			fprintf(stderr, "vmexperiment: %s\n", error);
++			free(addresses);
++			return 1;
++		}
++		print_result(&results[result_count++]);
++	}
++	fprintf(stderr, "vmexperiment: writing CSV\n");
++	collect_real_stats(&after);
++	if (write_csv(cfg.csv_output, &cfg, results, result_count,
++	    &before, &after) != 0) {
++		free(addresses);
++		return 1;
++	}
++	printf("CSV results written to %s\n", cfg.csv_output);
++	free(addresses);
++	fprintf(stderr, "vmexperiment: complete\n");
++	return 0;
++}
+diff --git a/minix/commands/vmexperiment/vmexperiment.h b/minix/commands/vmexperiment/vmexperiment.h
+new file mode 100644
+index 00000000..52a07403
+--- /dev/null
++++ b/minix/commands/vmexperiment/vmexperiment.h
+@@ -0,0 +1,68 @@
++#ifndef VMEXPERIMENT_H
++#define VMEXPERIMENT_H
++
++#include <stddef.h>
++#include <stdint.h>
++
++#define VMEXP_MAX_LEVELS 8
++#define VMEXP_PATH_MAX 512
++#define VMEXP_ERROR_MAX 256
++
++enum replacement_policy {
++	POLICY_FIFO = 0,
++	POLICY_LRU = 1,
++	POLICY_BOTH = 2
++};
++
++enum trace_mode {
++	TRACE_SEQUENTIAL = 0,
++	TRACE_LOCALITY = 1,
++	TRACE_RANDOM = 2,
++	TRACE_FILE = 3
++};
++
++struct vmexp_config {
++	unsigned int address_bits;
++	uint64_t page_size;
++	unsigned int levels;
++	unsigned int level_bits[VMEXP_MAX_LEVELS];
++	unsigned int level_bits_count;
++	unsigned int frames;
++	enum replacement_policy policy;
++	enum trace_mode trace_mode;
++	uint64_t references;
++	uint64_t working_set_bytes;
++	uint64_t hot_bytes;
++	uint64_t access_stride;
++	uint32_t seed;
++	char trace_file[VMEXP_PATH_MAX];
++	char csv_output[VMEXP_PATH_MAX];
++};
++
++struct simulation_result {
++	enum replacement_policy policy;
++	uint64_t references;
++	uint64_t hits;
++	uint64_t page_faults;
++	uint64_t replacements;
++	uint64_t empty_frames;
++	uint64_t page_table_nodes;
++	uint64_t page_table_entries;
++	uint64_t page_table_bytes;
++};
++
++void config_defaults(struct vmexp_config *cfg);
++int config_load(const char *path, struct vmexp_config *cfg,
++	char *error, size_t error_size);
++int config_validate(const struct vmexp_config *cfg,
++	char *error, size_t error_size);
++const char *policy_name(enum replacement_policy policy);
++const char *trace_mode_name(enum trace_mode mode);
++
++int trace_build(const struct vmexp_config *cfg, uint64_t **addresses,
++	size_t *count, char *error, size_t error_size);
++int simulate(const struct vmexp_config *cfg, const uint64_t *addresses,
++	size_t count, enum replacement_policy policy,
++	struct simulation_result *result, char *error, size_t error_size);
++
++#endif
+diff --git a/minix/fs/mfs/cache.c b/minix/fs/mfs/cache.c
+index 147332c4..cca03a76 100644
+--- a/minix/fs/mfs/cache.c
++++ b/minix/fs/mfs/cache.c
+@@ -26,6 +26,55 @@
+ #include "super.h"
+ #include "inode.h"
+ 
++static int zone_bit_is_free(struct super_block *sp, bit_t bit)
++{
++  block_t start_block, block;
++  unsigned int word, shift;
++  bitchunk_t value;
++  struct buf *bp;
++
++  start_block = START_BLOCK + sp->s_imap_blocks;
++  block = (block_t) (bit / FS_BITS_PER_BLOCK(sp->s_block_size));
++  word = (bit % FS_BITS_PER_BLOCK(sp->s_block_size)) /
++	FS_BITCHUNK_BITS;
++  shift = bit % FS_BITCHUNK_BITS;
++  bp = get_block(sp->s_dev, start_block + block, NORMAL);
++  value = (bitchunk_t) conv4(sp->s_native, (int) b_bitmap(bp)[word]);
++  put_block(bp, MAP_BLOCK);
++  return (value & ((bitchunk_t) 1 << shift)) == 0;
++}
++
++static bit_t find_zone_run_range(struct super_block *sp, bit_t first,
++  bit_t limit, unsigned int length)
++{
++  bit_t candidate, probe;
++  unsigned int offset;
++
++  candidate = first < 1 ? 1 : first;
++  while (candidate < limit && (bit_t) length <= limit - candidate) {
++	for (offset = 0; offset < length; offset++) {
++	  probe = candidate + (bit_t) offset;
++	  if (!zone_bit_is_free(sp, probe)) break;
++	}
++	if (offset == length) return(candidate);
++	candidate += (bit_t) offset + 1;
++  }
++  return(NO_BIT);
++}
++
++static bit_t find_zone_run(struct super_block *sp, bit_t origin,
++  unsigned int length)
++{
++  bit_t map_bits, found;
++
++  map_bits = (bit_t) (sp->s_zones - (sp->s_firstdatazone - 1));
++  if (origin >= map_bits) origin = 1;
++  found = find_zone_run_range(sp, origin, map_bits, length);
++  if (found == NO_BIT && origin > 1)
++	found = find_zone_run_range(sp, 1, origin, length);
++  return(found);
++}
++
+ /*===========================================================================*
+  *				alloc_zone				     *
+  *===========================================================================*/
+@@ -55,6 +104,18 @@ zone_t alloc_zone(
+   } else {
+ 	bit = (bit_t) (z - (sp->s_firstdatazone - 1));
+   }
++  if (mfs_extent_size > 1 && z == sp->s_firstdatazone) {
++	bit_t run;
++
++	mfs_extent_searches++;
++	run = find_zone_run(sp, bit, mfs_extent_size);
++	if (run != NO_BIT) {
++	  bit = run;
++	  mfs_extent_hits++;
++	} else {
++	  mfs_extent_fallbacks++;
++	}
++  }
+   b = alloc_bit(sp, ZMAP, bit);
+   if (b == NO_BIT) {
+ 	err_code = ENOSPC;
+@@ -69,6 +130,13 @@ zone_t alloc_zone(
+   return( (zone_t) (sp->s_firstdatazone - 1) + (zone_t) b);
+ }
+ 
++void mfs_extent_report(void)
++{
++  printf("MFS extent stats: size=%u searches=%lu hits=%lu fallbacks=%lu\n",
++	mfs_extent_size, mfs_extent_searches, mfs_extent_hits,
++	mfs_extent_fallbacks);
++}
++
+ /*===========================================================================*
+  *				free_zone				     *
+  *===========================================================================*/
+@@ -90,4 +158,3 @@ void free_zone(
+   if (bit < sp->s_zsearch) sp->s_zsearch = bit;
+ }
+ 
+-
+diff --git a/minix/fs/mfs/glo.h b/minix/fs/mfs/glo.h
+index f6a7e99f..d5f61317 100644
+--- a/minix/fs/mfs/glo.h
++++ b/minix/fs/mfs/glo.h
+@@ -38,4 +38,10 @@ EXTERN char fs_dev_label[16];	/* Name of the device driver that is handled
+ EXTERN int unmountdone;
+ EXTERN int exitsignaled;
+ 
++/* CSE335 extent-aware allocation experiment. */
++EXTERN unsigned int mfs_extent_size;
++EXTERN unsigned long mfs_extent_searches;
++EXTERN unsigned long mfs_extent_hits;
++EXTERN unsigned long mfs_extent_fallbacks;
++
+ #endif
+diff --git a/minix/fs/mfs/main.c b/minix/fs/mfs/main.c
+index 43c881dd..7107b535 100644
+--- a/minix/fs/mfs/main.c
++++ b/minix/fs/mfs/main.c
+@@ -30,9 +30,17 @@ int main(int argc, char *argv[])
+  * sending the reply. The loop never terminates, unless a panic occurs.
+  */
+   int error = OK, ind, transid;
++  long extent_size;
+ 
+   /* SEF local startup. */
+   env_setargs(argc, argv);
++  mfs_extent_size = 1;
++  extent_size = 1;
++  if (env_parse("mfs_extent_size", "d", 0, &extent_size, 1, 1024) ==
++	EP_SET)
++	mfs_extent_size = (unsigned int) extent_size;
++  printf("MFS: extent allocation preference is %u zone(s)\n",
++	mfs_extent_size);
+   sef_local_startup();
+ 
+   while(!unmountdone || !exitsignaled) {
+@@ -201,4 +209,3 @@ static void cch_check(void)
+   }
+ }
+ #endif
+-
+diff --git a/minix/fs/mfs/mount.c b/minix/fs/mfs/mount.c
+index 797b8185..01a2989d 100644
+--- a/minix/fs/mfs/mount.c
++++ b/minix/fs/mfs/mount.c
+@@ -191,9 +191,9 @@ int fs_unmount()
+   lmfs_invalidate(fs_dev);
+ 
+   /* Finish off the unmount. */
++  mfs_extent_report();
+   superblock.s_dev = NO_DEV;
+   unmountdone = TRUE;
+ 
+   return(OK);
+ }
+-
+diff --git a/minix/fs/mfs/proto.h b/minix/fs/mfs/proto.h
+index 6d955769..93784c42 100644
+--- a/minix/fs/mfs/proto.h
++++ b/minix/fs/mfs/proto.h
+@@ -17,6 +17,7 @@ struct super_block;
+ /* cache.c */
+ zone_t alloc_zone(dev_t dev, zone_t z);
+ void free_zone(dev_t dev, zone_t numb);
++void mfs_extent_report(void);
+ 
+ /* inode.c */
+ struct inode *alloc_inode(dev_t dev, mode_t bits);
+@@ -115,4 +116,3 @@ void zero_block(struct buf *bp);
+ int write_map(struct inode *, off_t, zone_t, int);
+ 
+ #endif
+-
+diff --git a/minix/fs/mfs/super.c b/minix/fs/mfs/super.c
+index b31edb2c..0d650565 100644
+--- a/minix/fs/mfs/super.c
++++ b/minix/fs/mfs/super.c
+@@ -40,7 +40,7 @@ bit_t origin;			/* number of bit to start searching at */
+   block_t block;
+   bit_t map_bits;		/* how many bits are there in the bit map? */
+   short bit_blocks;		/* how many blocks are there in the bit map? */
+-  unsigned word, bcount;
++  unsigned word, bcount, first_bit;
+   struct buf *bp;
+   bitchunk_t *wptr, *wlim, k;
+   bit_t i, b;
+@@ -64,6 +64,7 @@ bit_t origin;			/* number of bit to start searching at */
+   /* Locate the starting place. */
+   block = (block_t) (origin / FS_BITS_PER_BLOCK(sp->s_block_size));
+   word = (origin % FS_BITS_PER_BLOCK(sp->s_block_size)) / FS_BITCHUNK_BITS;
++  first_bit = origin % FS_BITCHUNK_BITS;
+ 
+   /* Iterate over all blocks plus one, because we start in the middle. */
+   bcount = bit_blocks + 1;
+@@ -74,12 +75,18 @@ bit_t origin;			/* number of bit to start searching at */
+ 	/* Iterate over the words in block. */
+ 	for (wptr = &b_bitmap(bp)[word]; wptr < wlim; wptr++) {
+ 
+-		/* Does this word contain a free bit? */
+-		if (*wptr == (bitchunk_t) ~0) continue;
++	/* Does this word contain a free bit? */
++		if (*wptr == (bitchunk_t) ~0) {
++			first_bit = 0;
++			continue;
++		}
+ 
+ 		/* Find and allocate the free bit. */
+ 		k = (bitchunk_t) conv4(sp->s_native, (int) *wptr);
+-		for (i = 0; (k & (1 << i)) != 0; ++i) {}
++		for (i = first_bit; i < FS_BITCHUNK_BITS &&
++		    (k & (1 << i)) != 0; ++i) {}
++		first_bit = 0;
++		if (i == FS_BITCHUNK_BITS) continue;
+ 
+ 		/* Bit number from the start of the bit map. */
+ 		b = ((bit_t) block * FS_BITS_PER_BLOCK(sp->s_block_size))
